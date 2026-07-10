@@ -418,11 +418,17 @@ function mapSubRow(r){ // CG report 21
   };
 }
 function parseGmpText(txt){ // one ipowatch table line already split into cells
-  // cells: [name, gmp, dot, price, est, dates, board, status, updated]
-  const gmp=num(txt.gmp), price=num(txt.price);
+  let gmp=num(txt.gmp), price=num(txt.price);
   const em=String(txt.est||'').match(/₹?\s*([\d,]+)\s*\(([-\d.]+)%\)/);
+  let estPrice=em?num(em[1]):null, gainPct=em?+em[2]:null;
+  if(estPrice!=null&&gainPct!=null){
+    // Est cell is self-consistent (est = price × (1+gain%)) — derive price & GMP from it,
+    // which self-heals column misalignment on closed/listed rows.
+    const pr=Math.round(estPrice/(1+gainPct/100));
+    if(pr>0){price=pr; gmp=estPrice-pr;}
+  } else if(gmp!=null&&price!=null&&Math.abs(gmp)>=price){gmp=null;} // misparse guard
   return {name:String(txt.name||'').trim(), gmp, price,
-    estPrice:em?num(em[1]):null, gainPct:em?+em[2]:null,
+    estPrice, gainPct,
     pct:(gmp!=null&&price)?+(gmp/price*100).toFixed(2):null};
 }
 function parseDetailText(txt){ // CG detail page plain text → facts
@@ -507,16 +513,17 @@ async function load(){
       const g=gmps.find(x=>nameMatch(x.name,b.name)||nameMatch(x.name,b.full))||null;
       const dOpen=b.dOpen||tt.dOpen, dClose=tt.dClose||b.dClose, dList=tt.dList||b.dList;
       const price=b.price||((g&&g.price)||null);
+      const st0=statusFrom(dOpen,dClose,dList,today);
       const p={
         ...b, ...{dOpen,dClose,dList},
         dBoa:tt.dBoa||null, dRef:tt.dRef||null,
         logo:b.logo||tt.logo||null,
         open:b.open||tt.open, close:tt.close||b.close, boa:tt.boa||'', listing:tt.listing||b.listing,
-        status:statusFrom(dOpen,dClose,dList,today),
+        status:st0,
         price, lot:null, pe:null,
         sizeCr:b.sizeCr||su.sizeCr||null,
         size:b.sizeCr?('₹'+b.sizeCr.toLocaleString('en-IN')+' Cr'):(su.sizeCr?('₹'+su.sizeCr.toLocaleString('en-IN')+' Cr'):'—'),
-        gmp:g&&g.gmp!=null&&price?{val:g.gmp,pct:+(g.gmp/price*100).toFixed(2)}:(g&&g.gmp!=null?{val:g.gmp,pct:g.pct}:null),
+        gmp:(st0!=='listed'&&g&&g.gmp!=null&&(!price||Math.abs(g.gmp)<price))?{val:g.gmp,pct:price?+(g.gmp/price*100).toFixed(2):g.pct}:null,
         estPrice:g?g.estPrice:null,
         sub:su.sub||{total:null,qib:null,shni:null,bhni:null,nii:null,rii:null,emp:null},
         apps:su.apps||null, updated:su.updated||'',
@@ -586,8 +593,12 @@ async function enrich(p){
     try{localStorage.setItem(key,JSON.stringify({t:Date.now(),d:det}))}catch(e){}
   }
   p.det=det;
-  if(det.price&&!p.price){p.price=det.price;if(p.gmp&&p.gmp.val!=null)p.gmp.pct=+(p.gmp.val/p.price*100).toFixed(2);}
+  if(det.price)p.price=det.price; // RHP upper band is authoritative
   if(det.lot)p.lot=det.lot;
+  if(p.gmp&&p.gmp.val!=null&&p.price){
+    if(Math.abs(p.gmp.val)>=p.price)p.gmp=null;          // sanity: GMP can never equal/exceed price
+    else p.gmp.pct=+(p.gmp.val/p.price*100).toFixed(2);
+  }
   queueRender();
 }
 
@@ -639,7 +650,7 @@ function card(p){
     </div>
     <div class="facts">
       <div class="fact"><div class="k">Price</div><div class="v">${p.price?fmtINR(p.price):'<small>TBA</small>'}</div></div>
-      <div class="fact"><div class="k">Lot / Min</div><div class="v">${p.lot?p.lot.toLocaleString('en-IN'):'…'} <small>${p.price&&p.lot?fmtINR(p.price*p.lot):''}</small></div></div>
+      <div class="fact"><div class="k">Lot / Min</div><div class="v">${p.lot?p.lot.toLocaleString('en-IN'):(p.status==='open'||p.status==='upcoming'?'…':'—')} <small>${p.price&&p.lot?fmtINR(p.price*p.lot):''}</small></div></div>
       <div class="fact"><div class="k">GMP*</div><div class="v">${gmp}</div></div>
       <div class="fact"><div class="k">Issue Size</div><div class="v">${esc(p.size)}</div></div>
     </div>
@@ -873,9 +884,11 @@ function runCalc(slug){
     : cat==='qib'?`QIB allotment is <b>proportionate</b> — no lottery. At <b>${x.toFixed(2)}x</b>, a bid for ${lots} lot(s) is scaled to ≈ <b>${o.expLots.toFixed(2)} lots</b>. (Family/PAN accounts don't apply to QIBs.)`
     : `${cat==='shni'?'Small':'Big'} HNI at <b>${x.toFixed(2)}x</b>. Draw of lots for the minimum application (${o.minL} lots), larger bids treated ≈ proportionately.`;
   pctEl.textContent=x<=1?'~100%':cat==='qib'?'Proportionate':o.pAny.toFixed(o.pAny<1?1:0)+'%';
+  const bidShares=lots*p.lot, expL=cat==='rii'?fam*o.pOne:o.expLots;
+  const bidLine=`📦 Bid: <b>${lots} lot(s) × ${p.lot.toLocaleString('en-IN')} = ${bidShares.toLocaleString('en-IN')} shares</b> (${fmtINR(bidShares*p.price)})${fam>1&&cat==='rii'?` per PAN · ${fam} PANs = ${(fam*bidShares).toLocaleString('en-IN')} shares bid in total`:''}`;
   ex.innerHTML=cat==='qib'
-    ?`${note}<br>Expected allocation: <b>${o.expLots.toFixed(2)} lots</b> (${(o.expLots*100/lots).toFixed(1)}% of bid)`
-    :`${note}<br>Per application: <b>${(o.pOne*100).toFixed(o.pOne*100<1?1:0)}%</b>${fam>1?` · Across <b>${fam}</b> PANs: <b>${o.pAny.toFixed(1)}%</b> chance of ≥1 allotment · expected total ≈ <b>${(cat==='rii'?fam*o.pOne:o.expLots).toFixed(2)} lots</b>`:` · expected ≈ <b>${o.expLots.toFixed(2)} lots</b>`}`;
+    ?`${bidLine}<br>${note}<br>Expected allocation: <b>${o.expLots.toFixed(2)} lots ≈ ${Math.round(o.expLots*p.lot).toLocaleString('en-IN')} shares</b> (${(o.expLots*100/lots).toFixed(1)}% of bid)`
+    :`${bidLine}<br>${note}<br>Per application: <b>${(o.pOne*100).toFixed(o.pOne*100<1?1:0)}%</b>${fam>1?` · Across <b>${fam}</b> PANs: <b>${o.pAny.toFixed(1)}%</b> chance of ≥1 allotment`:''} · expected ≈ <b>${expL.toFixed(2)} lots ≈ ${Math.round(expL*p.lot).toLocaleString('en-IN')} shares</b>`;
   if(o.expProfit!=null){
     const lotGain=p.gmp.val*p.lot;
     ev.innerHTML=`💰 <b>Expected value at current GMP (₹${p.gmp.val}/share)</b><br>
