@@ -153,6 +153,21 @@ table.ft td:not(:first-child),table.ft th:not(:first-child){text-align:right}
 .tg-allot{background:#ede9fe;color:#6d28d9}.tg-list{background:#e0f2fe;color:#0369a1}.tg-bid{background:#fef3c7;color:#92400e}
 .cday .ev b{cursor:pointer}
 .cday .ev small{color:var(--muted)}
+/* Record book */
+.bookwrap{grid-column:1/-1;display:flex;flex-direction:column;gap:12px}
+.bform{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;align-items:end}
+.bform label{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);display:block;margin-bottom:3px}
+.bform input,.bform select{width:100%;padding:8px 9px;border:1px solid var(--line);border-radius:9px;font-family:inherit;font-size:.82rem;background:#fff}
+.bform button{border:none;background:var(--green);color:#fff;font-family:inherit;font-weight:800;padding:10px;border-radius:9px;cursor:pointer;font-size:.82rem}
+.bsum{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.bsum .fact .v{font-size:1rem}
+table.bt{width:100%;border-collapse:collapse;font-size:.75rem}
+table.bt th{background:var(--bg);text-align:left;padding:6px 8px;font-size:.62rem;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);white-space:nowrap}
+table.bt td{padding:6px 8px;border-top:1px solid var(--line);white-space:nowrap}
+table.bt td.r,table.bt th.r{text-align:right}
+.bdel{border:none;background:#fee2e2;color:#b91c1c;border-radius:7px;padding:3px 8px;cursor:pointer;font-size:.7rem;font-weight:700}
+.bexp{border:1px solid var(--line);background:var(--bg);border-radius:9px;padding:8px 12px;font-family:inherit;font-size:.76rem;font-weight:700;cursor:pointer}
+.pl-pos{color:var(--green-dark);font-weight:700}.pl-neg{color:var(--red);font-weight:700}
 /* Paywall */
 .pwov{position:fixed;inset:0;background:rgba(18,23,30,.92);backdrop-filter:blur(6px);z-index:200;display:none;align-items:center;justify-content:center;padding:16px;overflow-y:auto}
 .pwov.show{display:flex}
@@ -208,6 +223,7 @@ footer b{color:#fff}
     <button class="tab" data-tab="upcoming">Upcoming<span class="cnt" id="c-upcoming"></span></button>
     <button class="tab" data-tab="closed">Closed / Listed<span class="cnt" id="c-closed"></span></button>
     <button class="tab" data-tab="cal">📅 Calendar</button>
+    <button class="tab" data-tab="book">📒 My Book</button>
   </div>
   <div class="seg">
     <button class="active" data-cat="all">All</button>
@@ -276,7 +292,8 @@ const SRC = {
   list : CG(82)+'all',
   ttM  : CG(118)+'mainboard',
   ttS  : CG(118)+'sme',
-  gmp  : 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/'
+  gmp  : 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/',
+  prem : 'https://www.ipopremium.in/view/subscription'
 };
 const DATA_BRIDGE='https://fd-license.deepuploads27.workers.dev/data?u=';
 const GAS_RELAY='https://script.google.com/macros/s/AKfycbyJhJb5xra7aJ9KU5appPOxo8VIZVs9jmAyn0IZ1soi81erNNaE09bW_lKK-5PsY8bK/exec?u=';
@@ -449,6 +466,56 @@ function parseDetailText(txt){ // CG detail page plain text → facts
   m=txt.match(/offer for sale of.{0,120}?(?:shares|crores?)/i); if(m)o.ofs=m[0].trim()+'.';
   return o;
 }
+function xirr(flows){ // flows: [{d:'YYYY-MM-DD', v:amount}] — bisection, annualized rate
+  const f=(flows||[]).filter(x=>x&&x.d&&x.v);
+  if(f.length<2||!f.some(x=>x.v<0)||!f.some(x=>x.v>0))return null;
+  const t0=new Date(f[0].d);
+  const yr=x=>(new Date(x.d)-t0)/(365*864e5);
+  const npv=r=>f.reduce((a,x)=>a+x.v/Math.pow(1+r,yr(x)),0);
+  let lo=-0.9999,hi=1e9,flo=npv(lo),fhi=npv(hi);
+  if(flo*fhi>0)return null;
+  for(let i=0;i<200;i++){const mid=(lo+hi)/2,fm=npv(mid);
+    if(Math.abs(fm)<1e-6)return mid;
+    if(flo*fm<0){hi=mid;}else{lo=mid;flo=fm;}}
+  return (lo+hi)/2;
+}
+function parsePremiumText(txt){ // ipopremium.in/view/subscription page text → per-IPO records
+  const out=[];const re=/([A-Z][\w .,&'()\-]{2,70}?)\s*\((Mainboard|BSE SME|NSE SME|NSE Emerge)\)/g;
+  const idx=[];let m;
+  while((m=re.exec(txt)))idx.push({i:m.index,name:m[1].trim(),board:m[2]});
+  for(let k=0;k<idx.length;k++){
+    const seg=txt.slice(idx[k].i,idx[k+1]?idx[k+1].i:idx[k].i+5000);
+    const r={name:idx[k].name,board:idx[k].board};
+    let mm=seg.match(/₹\s*([\d,]+)\s*to\s*₹\s*([\d,]+)/);
+    if(mm){r.priceLow=num(mm[1]);r.price=num(mm[2]);}
+    mm=seg.match(/Last updated on\s*([\d]{1,2}-\w{3}-\d{4}[\s\d:]*)/);
+    if(mm)r.updated=mm[1].trim();
+    const g=rx=>{const x=seg.match(rx);return x?parseFloat(x[1].replace(/,/g,'')):null;};
+    r.qib =g(/QIBs?\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    r.bhni=g(/(?:HNIs 10\+|bHNI)\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    r.shni=g(/(?:HNIs 2\+|sHNI)\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    r.nii =g(/HNIs\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    r.rii =g(/(?:Retail|Individual)\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    r.emp =g(/Employee\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    r.total=g(/Total\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    const ai=seg.search(/Application-?Wise/i);
+    if(ai>=0){const app=seg.slice(ai);
+      const ga=rx=>{const x=app.match(rx);return x?parseFloat(x[1].replace(/,/g,'')):null;};
+      r.appBhni=ga(/HNIs \(10L?\+\)\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+      r.appShni=ga(/HNIs \((?:2|3)-10L\)\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+      r.appRii =ga(/(?:Retail|Individual)\s+[\d,]+\s+[\d,]+\s+([\d.]+)/);
+    }
+    if(r.total!=null||r.rii!=null)out.push(r);
+  }
+  return out;
+}
+function effSub(p,cat){ // application-wise odds (IPO Premium) when available — the true lottery basis
+  const a=p.subApps||{};
+  if(cat==='rii'&&a.rii!=null)return a.rii;
+  if(cat==='shni'&&a.shni!=null)return a.shni;
+  if(cat==='bhni'&&a.bhni!=null)return a.bhni;
+  return p.sub[cat];
+}
 /* ============ END PURE HELPERS ============ */
 
 async function getJSON(url){
@@ -497,11 +564,16 @@ function parseIpowatch(html){
 async function load(){
   const grid=document.getElementById('grid');
   try{
-    const [sm,ss,li,tm,ts,gh]=await Promise.all([
+    const [sm,ss,li,tm,ts,gh,ph]=await Promise.all([
       getJSON(SRC.subM).catch(()=>null), getJSON(SRC.subS).catch(()=>null),
       getJSON(SRC.list), getJSON(SRC.ttM).catch(()=>null), getJSON(SRC.ttS).catch(()=>null),
-      getHTML(SRC.gmp).catch(()=>null)
+      getHTML(SRC.gmp).catch(()=>null), getHTML(SRC.prem).catch(()=>null)
     ]);
+    let prem=[];
+    if(ph){try{
+      const pd=new DOMParser().parseFromString(ph,'text/html');
+      prem=parsePremiumText(pd.body.textContent.replace(/\s+/g,' '));
+    }catch(e){}}
     const subBy={}; [(sm&&sm.reportTableData)||[],(ss&&ss.reportTableData)||[]].flat().forEach(r=>{const x=mapSubRow(r);if(x.slug)subBy[x.slug]=x;});
     const ttBy={}; [(tm&&tm.reportTableData)||[],(ts&&ts.reportTableData)||[]].flat().forEach(r=>{const x=mapTtRow(r);if(x.slug)ttBy[x.slug]=x;});
     const gmps=gh?parseIpowatch(gh):[];
@@ -528,8 +600,17 @@ async function load(){
         sub:su.sub||{total:null,qib:null,shni:null,bhni:null,nii:null,rii:null,emp:null},
         apps:su.apps||null, updated:su.updated||'',
         isin:b.isin||su.isin||null, nse:su.nse||null,
-        url:b.cgUrl, allotUrl:null, det:null
+        url:b.cgUrl, allotUrl:null, det:null, subApps:null
       };
+      // IPO Premium overlay — freshest subscription + application-wise odds
+      const pm=prem.find(x=>nameMatch(x.name,p.name)||nameMatch(x.name,p.full));
+      if(pm&&p.status!=='listed'){
+        ['total','qib','shni','bhni','nii','rii','emp'].forEach(k=>{if(pm[k]!=null)p.sub[k]=pm[k];});
+        if(pm.appRii!=null||pm.appShni!=null||pm.appBhni!=null)
+          p.subApps={rii:pm.appRii,shni:pm.appShni,bhni:pm.appBhni};
+        if(pm.updated)p.updated=pm.updated+' · IPO Premium';
+        if(!p.price&&pm.price)p.price=pm.price;
+      }
       return p;
     });
     // de-dup by slug, keep first
@@ -670,6 +751,7 @@ function render(){
   IPOS.forEach(p=>b[p.status==='open'?'open':p.status==='upcoming'?'upcoming':'closed'].push(p));
   ['open','upcoming','closed'].forEach(k=>document.getElementById('c-'+k).textContent='('+b[k].length+')');
   if(view.tab==='cal'){grid.innerHTML=calendarHTML();return;}
+  if(view.tab==='book'){grid.innerHTML=bookHTML();return;}
   let list=b[view.tab];
   if(view.cat!=='all')list=list.filter(p=>p.cat===view.cat);
   if(view.q)list=list.filter(p=>p.name.toLowerCase().includes(view.q));
@@ -815,10 +897,12 @@ function openDetail(slug){
           <input id="c-rate" type="number" min="0" step="0.5" value="0" oninput="runCalc('${slug}')">
           <label>Days capital stays blocked (ASBA)</label>
           <input id="c-days" type="number" min="1" value="7" oninput="runCalc('${slug}')">
+          <label>🎯 What-if: subscription reaches (× times)</label>
+          <input id="c-whatif" type="number" min="0" step="1" placeholder="e.g. 50" oninput="runCalc('${slug}')">
         </div>
       </div>
-      <div class="cres"><div class="pct" id="c-pct">—</div><div class="expl" id="c-expl"></div><div class="ev" id="c-ev"></div></div>
-      <div class="small">† Odds ≈ 100 ÷ times-subscribed (SEBI: draw of lots for the minimum application when oversubscribed; retail winners get exactly 1 lot). Amount-based approximation — the registrar's final basis uses valid application counts.</div>`
+      <div class="cres"><div class="pct" id="c-pct">—</div><div class="expl" id="c-expl"></div><div class="ev" id="c-ev"></div><div class="ev" id="c-whatif-out" style="display:none"></div></div>
+      <div class="small">† Odds ≈ 100 ÷ times-subscribed (SEBI: draw of lots for the minimum application when oversubscribed; retail winners get exactly 1 lot). ${p.subApps?'<b>Using application-wise subscription (IPO Premium) — the true lottery basis.</b>':'Amount-based approximation — the registrar\'s final basis uses valid application counts.'}</div>`
       :`<div class="small">Calculator activates once the price band & lot size are announced${p.status==='upcoming'?' (usually 3–4 days before open)':''}.</div>`}
     </div>
 
@@ -874,7 +958,7 @@ function runCalc(slug){
   const rate=Math.max(0,+document.getElementById('c-rate').value||0);
   const days=Math.max(1,+document.getElementById('c-days').value||7);
   const pctEl=document.getElementById('c-pct'),ex=document.getElementById('c-expl'),ev=document.getElementById('c-ev');
-  const x=p.sub[cat];
+  const x=effSub(p,cat);
   const minL=minsFor(p,cat);
   if(cat!=='rii'&&cat!=='qib'&&lots<minL){lots=minL;document.getElementById('c-lots').value=minL;}
   if(x==null){pctEl.textContent='—';ex.textContent='No subscription data yet for this category (appears once bidding opens).';ev.innerHTML='';return;}
@@ -889,6 +973,21 @@ function runCalc(slug){
   ex.innerHTML=cat==='qib'
     ?`${bidLine}<br>${note}<br>Expected allocation: <b>${o.expLots.toFixed(2)} lots ≈ ${Math.round(o.expLots*p.lot).toLocaleString('en-IN')} shares</b> (${(o.expLots*100/lots).toFixed(1)}% of bid)`
     :`${bidLine}<br>${note}<br>Per application: <b>${(o.pOne*100).toFixed(o.pOne*100<1?1:0)}%</b>${fam>1?` · Across <b>${fam}</b> PANs: <b>${o.pAny.toFixed(1)}%</b> chance of ≥1 allotment`:''} · expected ≈ <b>${expL.toFixed(2)} lots ≈ ${Math.round(expL*p.lot).toLocaleString('en-IN')} shares</b>`;
+  // what-if scenario
+  const wiEl=document.getElementById('c-whatif-out');
+  const wi=+((document.getElementById('c-whatif')||{}).value)||0;
+  if(wiEl){
+    if(wi>0){
+      const ow=calcOutcome(cat,wi,lots,fam,p.price,p.lot,p.gmp?p.gmp.val:null,rate,days,minL);
+      const expW=cat==='rii'?fam*ow.pOne:ow.expLots;
+      wiEl.style.display='block';
+      wiEl.innerHTML=`🎯 <b>What-if the ${ {rii:'Retail',shni:'sHNI',bhni:'bHNI',qib:'QIB'}[cat] } category ends at ${wi}×</b><br>`+
+        (wi<=1?`Undersubscribed — full allotment of your ${lots} lot(s) = ${(lots*p.lot).toLocaleString('en-IN')} shares likely.`
+        :cat==='qib'?`Proportionate: allocation ≈ <b>${ow.expLots.toFixed(2)} lots ≈ ${Math.round(ow.expLots*p.lot).toLocaleString('en-IN')} shares</b> on your ${lots}-lot bid`
+        :`Lottery odds per application: <b>${(ow.pOne*100).toFixed(ow.pOne*100<1?1:0)}%</b>${fam>1?` · ≥1 allotment across ${fam} PANs: <b>${ow.pAny.toFixed(1)}%</b>`:''} · expected ≈ <b>${expW.toFixed(2)} lots ≈ ${Math.round(expW*p.lot).toLocaleString('en-IN')} shares</b>`)+
+        `${ow.expProfit!=null?` · EV at current GMP ≈ <b class="${ow.expProfit>=0?'pos':'neg'}">${fmtINR(ow.expProfit)}</b>`:''}`;
+    }else{wiEl.style.display='none';wiEl.innerHTML='';}
+  }
   if(o.expProfit!=null){
     const lotGain=p.gmp.val*p.lot;
     ev.innerHTML=`💰 <b>Expected value at current GMP (₹${p.gmp.val}/share)</b><br>
@@ -898,6 +997,119 @@ function runCalc(slug){
       Capital blocked ≈ <b>${fmtINR(o.capital)}</b> for ~${days} days
       <br><span style="color:var(--muted)">GMP is indicative sentiment — not a promise.</span>`;
   }else ev.innerHTML='';
+}
+
+/* ================= RECORD BOOK (My Book) ================= */
+function bookAll(){try{return JSON.parse(localStorage.getItem('fd_book')||'[]')}catch(e){return[]}}
+function bookSave(a){try{localStorage.setItem('fd_book',JSON.stringify(a))}catch(e){}}
+function bookCalc(e){ // derived numbers for one entry
+  const cost=(e.ss||0)*(e.pr||0);
+  const gross=e.sp!=null&&e.ss?((e.sp-e.pr)*e.ss):null;
+  const net=gross!=null?gross-(e.ch||0):null;
+  return {cost,gross,net};
+}
+function bookFlows(entries){ // cashflows for XIRR (allotted+sold entries only)
+  const f=[];
+  entries.forEach(e=>{
+    const {cost,net}=bookCalc(e);
+    if(e.ss>0&&e.sp!=null&&e.ad&&e.sd){
+      f.push({d:e.ad,v:-cost});
+      f.push({d:e.sd,v:cost+net});
+    }
+  });
+  return f.sort((a,b)=>new Date(a.d)-new Date(b.d));
+}
+function bookAdd(){
+  const g=id=>document.getElementById(id);
+  const sel=g('b-ipo').value;
+  const name=sel==='__other'?g('b-name').value.trim():sel;
+  if(!name){alert('Select or type the IPO name');return;}
+  const e={
+    id:Date.now(),
+    name, cat:g('b-cat').value,
+    ad:g('b-ad').value||null,
+    ss:+g('b-ss').value||0,
+    pr:+g('b-pr').value||0,
+    sd:g('b-sd').value||null,
+    sp:g('b-sp').value===''?null:+g('b-sp').value,
+    ch:+g('b-ch').value||0
+  };
+  if(!e.ad){alert('Application date is needed (for IRR)');return;}
+  const a=bookAll();a.push(e);bookSave(a);render();
+}
+function bookDel(id){
+  if(!confirm('Delete this record?'))return;
+  bookSave(bookAll().filter(x=>x.id!==id));render();
+}
+function bookCSV(){
+  const rows=[['IPO','Category','Applied On','Shares Allotted','Issue Price','Cost','Sold On','Sell Price','Gross P/L','Charges & Taxes','Net P/L']];
+  bookAll().forEach(e=>{const c=bookCalc(e);
+    rows.push([e.name,e.cat,e.ad||'',e.ss,e.pr,c.cost,e.sd||'',e.sp??'',c.gross??'',e.ch||0,c.net??'']);});
+  const csv=rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent('\ufeff'+csv);
+  a.download='FinDeependence-IPO-Book.csv';a.click();
+}
+function bookHTML(){
+  const all=bookAll().sort((a,b)=>(b.sd||b.ad||'').localeCompare(a.sd||a.ad||''));
+  const done=all.filter(e=>bookCalc(e).net!=null);
+  const totCost=done.reduce((a,e)=>a+bookCalc(e).cost,0);
+  const totGross=done.reduce((a,e)=>a+(bookCalc(e).gross||0),0);
+  const totCh=done.reduce((a,e)=>a+(e.ch||0),0);
+  const totNet=done.reduce((a,e)=>a+(bookCalc(e).net||0),0);
+  const wins=done.filter(e=>bookCalc(e).net>0).length;
+  const rate=xirr(bookFlows(all));
+  // month-wise (by sell date)
+  const mon={};
+  done.forEach(e=>{if(!e.sd)return;const k=e.sd.slice(0,7);
+    (mon[k]=mon[k]||{n:0,net:0,cost:0}).n++;mon[k].net+=bookCalc(e).net;mon[k].cost+=bookCalc(e).cost;});
+  const monRows=Object.keys(mon).sort().reverse().map(k=>{
+    const m=mon[k];const d=new Date(k+'-01');
+    return `<tr><td>${d.toLocaleDateString('en-IN',{month:'long',year:'numeric'})}</td><td class="r">${m.n}</td><td class="r">${fmtINR(m.cost)}</td><td class="r ${m.net>=0?'pl-pos':'pl-neg'}">${fmtINR(m.net)}</td><td class="r">${m.cost?((m.net/m.cost*100).toFixed(1)+'%'):'—'}</td></tr>`;}).join('');
+  const opts=IPOS.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  const entryRows=all.map(e=>{const c=bookCalc(e);
+    return `<tr><td>${esc(e.name)}</td><td>${{rii:'Retail',shni:'sHNI',bhni:'bHNI',qib:'QIB'}[e.cat]||e.cat}</td>
+      <td>${e.ad||'—'}</td><td class="r">${e.ss||0}</td><td class="r">${fmtINR(e.pr)}</td><td class="r">${fmtINR(c.cost)}</td>
+      <td>${e.sd||'—'}</td><td class="r">${e.sp!=null?fmtINR(e.sp):'—'}</td>
+      <td class="r ${c.gross==null?'':c.gross>=0?'pl-pos':'pl-neg'}">${c.gross!=null?fmtINR(c.gross):'—'}</td>
+      <td class="r">${fmtINR(e.ch||0)}</td>
+      <td class="r ${c.net==null?'':c.net>=0?'pl-pos':'pl-neg'}">${c.net!=null?fmtINR(c.net):'open'}</td>
+      <td><button class="bdel" onclick="bookDel(${e.id})">✕</button></td></tr>`;}).join('');
+  return `<div class="bookwrap">
+    <div class="sect"><h3>➕ Add a record</h3>
+      <div class="bform">
+        <div><label>IPO</label><select id="b-ipo" onchange="document.getElementById('b-name').style.display=this.value==='__other'?'block':'none'"><option value="__other">— Other / type name —</option>${opts}</select>
+        <input id="b-name" placeholder="IPO name" style="margin-top:4px"></div>
+        <div><label>Category</label><select id="b-cat"><option value="rii">Retail</option><option value="shni">sHNI</option><option value="bhni">bHNI</option><option value="qib">QIB</option></select></div>
+        <div><label>Applied on</label><input id="b-ad" type="date"></div>
+        <div><label>Shares allotted (0 = none)</label><input id="b-ss" type="number" min="0" placeholder="35"></div>
+        <div><label>Issue price ₹</label><input id="b-pr" type="number" min="0" step="0.01"></div>
+        <div><label>Sold on</label><input id="b-sd" type="date"></div>
+        <div><label>Sell price ₹ (blank = holding)</label><input id="b-sp" type="number" min="0" step="0.01"></div>
+        <div><label>Charges & taxes ₹</label><input id="b-ch" type="number" min="0" step="0.01" value="0"></div>
+        <div><button onclick="bookAdd()">Add Record</button></div>
+      </div>
+      <div class="small">Tip: allotment refused? Add it with 0 shares — your hit-rate stays honest. Data lives on this device only — use Export for backup.</div>
+    </div>
+    <div class="sect"><h3>📊 Performance Summary <span class="rt">${done.length} completed · ${all.length-done.length} open/none</span></h3>
+      <div class="bsum">
+        <div class="fact"><div class="k">Capital Deployed</div><div class="v">${fmtINR(totCost)}</div></div>
+        <div class="fact"><div class="k">Gross P/L</div><div class="v ${totGross>=0?'pl-pos':'pl-neg'}">${fmtINR(totGross)}</div></div>
+        <div class="fact"><div class="k">Charges & Taxes</div><div class="v">${fmtINR(totCh)}</div></div>
+        <div class="fact"><div class="k">Net P/L</div><div class="v ${totNet>=0?'pl-pos':'pl-neg'}">${fmtINR(totNet)}</div></div>
+        <div class="fact"><div class="k">Return on Deployed</div><div class="v">${totCost?((totNet/totCost*100).toFixed(2)+'%'):'—'}</div></div>
+        <div class="fact"><div class="k">XIRR (annualized)</div><div class="v ${rate!=null&&rate>=0?'pl-pos':rate!=null?'pl-neg':''}">${rate!=null?(rate>9.99?'>999%':(rate*100).toFixed(1)+'%'):'—'}</div></div>
+        <div class="fact"><div class="k">Win Rate</div><div class="v">${done.length?Math.round(wins/done.length*100)+'%':'—'}</div></div>
+      </div>
+      <div class="small">XIRR uses actual cash-flow dates: money out on application date, money back (cost + net P/L) on sell date. Excludes open positions and nil-allotments.</div>
+    </div>
+    ${monRows?`<div class="sect"><h3>📅 Month-wise P/L <span class="rt">by sell date</span></h3>
+      <table class="bt"><tr><th>Month</th><th class="r">Deals</th><th class="r">Capital</th><th class="r">Net P/L</th><th class="r">Return</th></tr>${monRows}</table></div>`:''}
+    <div class="sect"><h3>📒 All Records <span class="rt"><button class="bexp" onclick="bookCSV()">⬇ Export CSV</button></span></h3>
+      ${all.length?`<div style="overflow-x:auto"><table class="bt"><tr><th>IPO</th><th>Cat</th><th>Applied</th><th class="r">Shares</th><th class="r">Issue ₹</th><th class="r">Cost</th><th>Sold</th><th class="r">Sell ₹</th><th class="r">Gross P/L</th><th class="r">Charges</th><th class="r">Net P/L</th><th></th></tr>${entryRows}</table></div>`
+      :'<div class="small">No records yet — add your first application above. Your IPO journal builds here: scrip-wise, month-wise, with XIRR.</div>'}
+    </div>
+  </div>`;
 }
 
 /* ============ LICENSE (access codes) ============ */
