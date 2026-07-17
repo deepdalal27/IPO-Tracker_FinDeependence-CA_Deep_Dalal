@@ -232,7 +232,7 @@ footer b{color:#fff}
 .pbar-f.full{background:var(--amber)}
 .pbar-v{width:110px;text-align:right;font-size:.75rem;color:var(--ink);white-space:nowrap}
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 </head>
 <body>
 <header>
@@ -1475,15 +1475,126 @@ function planHTML(){
   </div>`;
 }
 
-/* ---------------- Excel export (SheetJS) ---------------- */
+/* ---------------- Excel export (ExcelJS — branded, institutional-grade) ---------------- */
+const XC={green:'FF1FA463',greenD:'FF157A49',teal:'FF35C4D7',tealS:'FFE4F7FA',ink:'FF1F2430',
+  mut:'FF6B7280',bg:'FFF4F8F6',line:'FFE5EAE8',white:'FFFFFFFF',red:'FFDC2626',amber:'FFD97706',band:'FFF0F7F3'};
 function ensureXLSX(){
-  if(typeof XLSX==='undefined'){alert('Excel library not loaded (check internet connection and refresh the page).');return false;}
+  if(typeof ExcelJS==='undefined'){alert('Excel library not loaded (check internet connection and refresh the page).');return false;}
   return true;
 }
-const IPO_COLS=['Company','Board','Status','Open Date','Close Date','Allotment (BoA) Date','Refund Date','Listing Date',
-  'Issue/Allotment Price ₹','Lot Size (shares)','Retail 1-Lot Cost ₹','sHNI Min Lots','sHNI Min Amount ₹','bHNI Min Lots','bHNI Min Amount ₹',
-  'GMP ₹','GMP %','Est. Listing ₹','Sub Total (x)','QIB (x)','sHNI (x)','bHNI (x)','NII (x)','Retail (x)','Verdict Score','Issue Size ₹Cr'];
-function ipoRow(p){
+const nowIST=()=>new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST';
+function xBorder(){const th={style:'thin',color:{argb:XC.line}};return {top:th,bottom:th,left:th,right:th};}
+/* draw a bar chart on canvas → PNG dataURL (handles negatives). Returns null outside browser. */
+function chartPNG(title,labels,vals,opts){
+  try{
+    if(typeof document==='undefined')return null;
+    const o=opts||{},scale=2,W=o.w||760,H=o.h||360;
+    const cv=document.createElement('canvas');if(!cv.getContext)return null;
+    cv.width=W*scale;cv.height=H*scale;
+    const ctx=cv.getContext('2d');if(!ctx)return null;
+    ctx.scale(scale,scale);
+    ctx.fillStyle='#ffffff';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#1f2430';ctx.font='bold 15px Arial';ctx.fillText(title,16,26);
+    ctx.fillStyle='#6b7280';ctx.font='10px Arial';
+    ctx.fillText('FinDeependence · by CA Deep Dalal · '+nowIST(),16,H-10);
+    const T=48,B=54,L=16,R=16,PW=W-L-R,PH=H-T-B;
+    const maxV=Math.max(0,...vals),minV=Math.min(0,...vals);
+    const span=(maxV-minV)||1;
+    const zeroY=T+PH*(maxV/span);
+    const n=vals.length||1,slot=PW/n,bw=Math.min(64,slot*0.62);
+    ctx.strokeStyle='#c9d2ce';ctx.beginPath();ctx.moveTo(L,zeroY);ctx.lineTo(W-R,zeroY);ctx.stroke();
+    vals.forEach((v,i)=>{
+      const x=L+slot*i+(slot-bw)/2;
+      const h=PH*Math.abs(v)/span;
+      const y=v>=0?zeroY-h:zeroY;
+      ctx.fillStyle=o.color?o.color:(v>=0?'#1fa463':'#dc2626');
+      ctx.fillRect(x,y,bw,Math.max(h,1));
+      ctx.fillStyle='#1f2430';ctx.font='bold 10px Arial';ctx.textAlign='center';
+      const lab=o.fmt?o.fmt(v):String(v);
+      ctx.fillText(lab,x+bw/2,v>=0?y-4:y+h+11);
+      ctx.fillStyle='#6b7280';ctx.font='9px Arial';
+      const nm=String(labels[i]||'').slice(0,11);
+      ctx.fillText(nm,x+bw/2,zeroY+(v>=0?12:-4)+(v>=0?Math.max(0,0):0));
+      ctx.textAlign='left';
+    });
+    return cv.toDataURL('image/png');
+  }catch(e){return null;}
+}
+function addChart(wb,ws,dataUrl,row,col,wpx,hpx){
+  if(!dataUrl)return;
+  try{
+    const id=wb.addImage({base64:dataUrl,extension:'png'});
+    ws.addImage(id,{tl:{col:col,row:row},ext:{width:wpx||760,height:hpx||360}});
+  }catch(e){}
+}
+/* branded title block on any sheet */
+function brandHeader(ws,label,lastCol){
+  ws.mergeCells(1,1,1,lastCol);
+  const a=ws.getCell(1,1);
+  a.value='FinDeependence — Live IPO Tracker & Decision Toolkit';
+  a.font={bold:true,size:15,color:{argb:XC.white}};
+  a.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.green}};
+  a.alignment={vertical:'middle',horizontal:'left',indent:1};
+  ws.getRow(1).height=28;
+  ws.mergeCells(2,1,2,lastCol);
+  const b=ws.getCell(2,1);
+  b.value='Freedom with Finance  ·  Founder: CA Deep Dalal  ·  '+label+'  ·  Exported '+nowIST();
+  b.font={size:10,color:{argb:XC.white}};
+  b.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.greenD}};
+  b.alignment={vertical:'middle',horizontal:'left',indent:1};
+  ws.getRow(2).height=18;
+}
+function footNote(ws,row,lastCol,extra){
+  ws.mergeCells(row,1,row,lastCol);
+  const c=ws.getCell(row,1);
+  c.value=(extra?extra+'  ':'')+'Education only — not investment advice. GMP is unofficial grey-market chatter. Verify dates on NSE/BSE/RHP. Sources: Chittorgarh reports 82/118/21; ipowatch.in / ipopremium.in.';
+  c.font={italic:true,size:9,color:{argb:XC.mut}};
+  c.alignment={wrapText:true};
+}
+/* styled data table writer: returns last data row index */
+function styledTable(ws,startRow,cols,rows){
+  const hr=ws.getRow(startRow);
+  cols.forEach((c,i)=>{
+    const cell=hr.getCell(i+1);
+    cell.value=c.h;
+    cell.font={bold:true,size:10,color:{argb:XC.white}};
+    cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.greenD}};
+    cell.alignment={vertical:'middle',horizontal:c.align||'left',wrapText:true};
+    cell.border=xBorder();
+    ws.getColumn(i+1).width=c.w||14;
+  });
+  hr.height=26;
+  rows.forEach((r,ri)=>{
+    const row=ws.getRow(startRow+1+ri);
+    r.forEach((v,ci)=>{
+      const cell=row.getCell(ci+1);
+      cell.value=v===''?null:v;
+      const c=cols[ci];
+      cell.font={size:10,color:{argb:XC.ink}};
+      cell.alignment={horizontal:c.align||'left',vertical:'middle'};
+      if(c.fmt)cell.numFmt=c.fmt;
+      cell.border=xBorder();
+      if(ri%2===1)cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.band}};
+    });
+  });
+  return startRow+rows.length;
+}
+const FMT_INR='"₹"#,##0;[Red]-"₹"#,##0';
+const FMT_X='#,##0.00"x"';
+const FMT_PCT='#,##0.0"%"';
+const IPO_XCOLS=[
+  {h:'Company',w:30},{h:'Board',w:10},{h:'Status',w:10},
+  {h:'Open',w:11},{h:'Close',w:11},{h:'Allotment',w:11},{h:'Refund',w:11},{h:'Listing',w:11},
+  {h:'Price ₹',w:9,align:'right',fmt:'#,##0'},{h:'Lot (sh)',w:8,align:'right'},
+  {h:'1 Lot ₹',w:11,align:'right',fmt:FMT_INR},
+  {h:'sHNI Min Lots',w:9,align:'right'},{h:'sHNI Min ₹',w:12,align:'right',fmt:FMT_INR},
+  {h:'bHNI Min Lots',w:9,align:'right'},{h:'bHNI Min ₹',w:13,align:'right',fmt:FMT_INR},
+  {h:'GMP ₹',w:8,align:'right'},{h:'GMP %',w:8,align:'right',fmt:FMT_PCT},{h:'Est List ₹',w:10,align:'right',fmt:'#,##0'},
+  {h:'Total Sub',w:9,align:'right',fmt:FMT_X},{h:'QIB',w:8,align:'right',fmt:FMT_X},{h:'sHNI',w:8,align:'right',fmt:FMT_X},
+  {h:'bHNI',w:8,align:'right',fmt:FMT_X},{h:'Retail',w:8,align:'right',fmt:FMT_X},
+  {h:'Verdict',w:8,align:'right'},{h:'Size ₹Cr',w:10,align:'right',fmt:'#,##0'}
+];
+function ipoXRow(p){
   const shniL=p.price&&p.lot?minLotsFor(200000,p.price,p.lot):null;
   const bhniL=p.price&&p.lot?minLotsFor(1000000,p.price,p.lot):null;
   const v=verdict(p);
@@ -1492,95 +1603,207 @@ function ipoRow(p){
     p.price??'',p.lot??'',p.price&&p.lot?p.price*p.lot:'',
     shniL??'',shniL?shniL*p.price*p.lot:'',bhniL??'',bhniL?bhniL*p.price*p.lot:'',
     p.gmp?p.gmp.val:'',p.gmp?p.gmp.pct:'',p.gmp&&p.price?p.price+p.gmp.val:(p.estPrice||''),
-    p.sub.total??'',p.sub.qib??'',p.sub.shni??'',p.sub.bhni??'',p.sub.nii??'',p.sub.rii??'',
+    p.sub.total??'',p.sub.qib??'',p.sub.shni??'',p.sub.bhni??'',p.sub.rii??'',
     v.score,p.sizeCr??''];
 }
-function sheetFrom(rows,cols){
-  const ws=XLSX.utils.aoa_to_sheet([cols,...rows]);
-  ws['!cols']=cols.map((c,i)=>({wch:i===0?32:Math.max(12,String(c).length+2)}));
+function addIpoSheet(wb,label,list){
+  const ws=wb.addWorksheet(label,{views:[{state:'frozen',ySplit:4}]});
+  brandHeader(ws,label+' — '+list.length+' IPOs',IPO_XCOLS.length);
+  const last=styledTable(ws,4,IPO_XCOLS,list.map(ipoXRow));
+  if(list.length){
+    /* Excel-native visual layers: data bars + colour scale */
+    ws.addConditionalFormatting({ref:'S5:S'+(last+1),rules:[{type:'dataBar',minLength:0,maxLength:100,
+      cfvo:[{type:'num',value:0},{type:'num',value:Math.max(10,...list.map(p=>p.sub.total||0))}],color:{argb:XC.teal},priority:1}]});
+    ws.addConditionalFormatting({ref:'Q5:Q'+(last+1),rules:[{type:'dataBar',minLength:0,maxLength:100,
+      cfvo:[{type:'num',value:0},{type:'num',value:Math.max(20,...list.map(p=>p.gmp?p.gmp.pct:0))}],color:{argb:XC.green},priority:2}]});
+    ws.addConditionalFormatting({ref:'X5:X'+(last+1),rules:[{type:'colorScale',
+      cfvo:[{type:'num',value:0},{type:'num',value:50},{type:'num',value:100}],
+      color:[{argb:'FFF8D7DA'},{argb:'FFFFF3CD'},{argb:'FFD4EDDA'}],priority:3}]});
+  }
+  footNote(ws,last+3,IPO_XCOLS.length);
   return ws;
 }
-function exportExcel(){
+async function xlsxDownload(wb,name){
+  const buf=await wb.xlsx.writeBuffer();
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  a.download=name;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+async function exportExcel(){
   if(!ensureXLSX())return;
-  const wb=XLSX.utils.book_new();
-  const groups={'Upcoming':'upcoming','Ongoing (Open)':'open','Closed (Await Listing)':'closed','Listed':'listed'};
-  Object.entries(groups).forEach(([label,st])=>{
-    const rows=IPOS.filter(p=>p.status===st).sort((a,b)=>(a.dOpen||'').localeCompare(b.dOpen||'')).map(ipoRow);
-    XLSX.utils.book_append_sheet(wb,sheetFrom(rows,IPO_COLS),label);
-  });
-  /* My Book — with P&L, XIRR, yield */
+  const wb=new ExcelJS.Workbook();
+  wb.creator='FinDeependence — CA Deep Dalal';wb.created=new Date();
+  /* ---------- DASHBOARD ---------- */
+  const dash=wb.addWorksheet('Dashboard');
+  brandHeader(dash,'Portfolio Dashboard',10);
+  for(let i=1;i<=10;i++)dash.getColumn(i).width=13;
+  const counts={open:0,upcoming:0,closed:0,listed:0};
+  IPOS.forEach(p=>counts[p.status]!==undefined&&counts[p.status]++);
   const entries=bookAll();
-  const bkRows=entries.map(e=>{const c=bookCalc(e);
+  const done=entries.filter(e=>bookCalc(e).net!=null);
+  const totNet=done.reduce((a,e)=>a+(bookCalc(e).net||0),0);
+  const totCost=done.reduce((a,e)=>a+bookCalc(e).cost,0);
+  const rate=xirr(bookFlows(entries));
+  const kpis=[['Open IPOs',counts.open,XC.green],['Upcoming',counts.upcoming,XC.teal],
+    ['Awaiting Listing',counts.closed,XC.amber],['Listed',counts.listed,XC.mut],
+    ['My Book Net P&L',totNet,totNet>=0?XC.green:XC.red,FMT_INR],
+    ['XIRR',rate!=null?(rate*100):null,XC.greenD,'#,##0.0"%"'],
+    ['Yield on Cost',totCost?totNet/totCost*100:null,XC.greenD,'#,##0.0"%"']];
+  kpis.forEach((k,i)=>{
+    const c0=1+i;
+    const lab=dash.getCell(4,c0);lab.value=k[0];
+    lab.font={size:9,color:{argb:XC.mut}};lab.alignment={horizontal:'center'};
+    const val=dash.getCell(5,c0);val.value=k[1];
+    val.font={bold:true,size:16,color:{argb:k[2]}};val.alignment={horizontal:'center'};
+    if(k[3])val.numFmt=k[3];
+    [lab,val].forEach(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.tealS}};c.border=xBorder();});
+  });
+  dash.getRow(5).height=24;
+  /* chart images */
+  const live=IPOS.filter(p=>p.status==='open'||p.status==='upcoming');
+  const gmpSet=live.filter(p=>p.gmp&&p.gmp.pct!=null).sort((a,b)=>b.gmp.pct-a.gmp.pct).slice(0,10);
+  addChart(wb,dash,chartPNG('GMP % — open & upcoming IPOs (unofficial grey market)',
+    gmpSet.map(p=>p.name),gmpSet.map(p=>p.gmp.pct),{fmt:v=>v.toFixed(1)+'%'}),6,0);
+  const subSet=IPOS.filter(p=>p.sub.total!=null&&p.status==='open').sort((a,b)=>b.sub.total-a.sub.total).slice(0,10);
+  addChart(wb,dash,chartPNG('Live subscription (x) — open IPOs',
+    subSet.map(p=>p.name),subSet.map(p=>p.sub.total),{color:'#35c4d7',fmt:v=>v.toFixed(1)+'x'}),25,0);
+  const mon={};
+  done.forEach(e=>{if(!e.sd)return;const k=e.sd.slice(0,7);mon[k]=(mon[k]||0)+bookCalc(e).net;});
+  const mk=Object.keys(mon).sort().slice(-12);
+  addChart(wb,dash,chartPNG('My Book — monthly net P&L (₹)',
+    mk.map(k=>k.slice(2)),mk.map(k=>Math.round(mon[k])),{fmt:v=>'₹'+Math.round(v).toLocaleString('en-IN')}),44,0);
+  footNote(dash,64,10,'Charts are static snapshots generated at export time.');
+  /* ---------- DATA SHEETS ---------- */
+  const groups=[['Upcoming','upcoming'],['Ongoing (Open)','open'],['Closed (Await Listing)','closed'],['Listed','listed']];
+  groups.forEach(([label,st])=>addIpoSheet(wb,label,
+    IPOS.filter(p=>p.status===st).sort((a,b)=>(a.dOpen||'').localeCompare(b.dOpen||''))));
+  /* ---------- MY BOOK ---------- */
+  const bws=wb.addWorksheet('My Book P&L',{views:[{state:'frozen',ySplit:4}]});
+  const BCOLS=[{h:'IPO',w:28},{h:'Category',w:10},{h:'Applied On',w:12},{h:'Shares',w:8,align:'right'},
+    {h:'Issue ₹',w:9,align:'right',fmt:'#,##0'},{h:'Cost ₹',w:12,align:'right',fmt:FMT_INR},
+    {h:'Sold On',w:12},{h:'Sell ₹',w:9,align:'right',fmt:'#,##0'},{h:'Gross P/L ₹',w:12,align:'right',fmt:FMT_INR},
+    {h:'Charges ₹',w:10,align:'right',fmt:FMT_INR},{h:'Net P/L ₹',w:12,align:'right',fmt:FMT_INR},
+    {h:'Yield %',w:9,align:'right',fmt:FMT_PCT}];
+  brandHeader(bws,'My Book — personal IPO P&L register',BCOLS.length);
+  const bRows=entries.map(e=>{const c=bookCalc(e);
     return [e.name,e.cat,e.ad||'',e.ss,e.pr,c.cost,e.sd||'',e.sp??'',c.gross??'',e.ch||0,c.net??'',
       c.net!=null&&c.cost?+(c.net/c.cost*100).toFixed(2):''];});
-  const done=entries.filter(e=>bookCalc(e).net!=null);
-  const totCost=done.reduce((a,e)=>a+bookCalc(e).cost,0);
-  const totNet=done.reduce((a,e)=>a+(bookCalc(e).net||0),0);
-  const rate=xirr(bookFlows(entries));
-  bkRows.push([],['TOTALS (closed trades)','','','','',totCost,'','','','',totNet,totCost?+(totNet/totCost*100).toFixed(2):''],
-    ['XIRR (annualised)','',rate!=null?+(rate*100).toFixed(2)+'%':'insufficient data']);
-  XLSX.utils.book_append_sheet(wb,sheetFrom(bkRows,
-    ['IPO','Category','Applied On','Shares Allotted','Issue Price ₹','Cost ₹','Sold On','Sell Price ₹','Gross P/L ₹','Charges ₹','Net P/L ₹','Yield %']),'My Book P&L');
-  /* Allocation plan (if planner was opened) */
+  const bLast=styledTable(bws,4,BCOLS,bRows);
+  const tr=bws.getRow(bLast+2);
+  [['TOTALS (closed trades)',1],[totCost,6],[totNet,11],[totCost?+(totNet/totCost*100).toFixed(2):'',12]].forEach(([v,c])=>{
+    const cell=tr.getCell(c);cell.value=v;
+    cell.font={bold:true,size:11,color:{argb:XC.greenD}};
+    if(c===6||c===11)cell.numFmt=FMT_INR;if(c===12)cell.numFmt=FMT_PCT;
+  });
+  const xr=bws.getRow(bLast+3);
+  xr.getCell(1).value='XIRR (annualised)';
+  xr.getCell(6).value=rate!=null?+(rate*100).toFixed(2):'insufficient data';
+  if(rate!=null)xr.getCell(6).numFmt=FMT_PCT;
+  [xr.getCell(1),xr.getCell(6)].forEach(c=>c.font={bold:true,size:11,color:{argb:XC.greenD}});
+  footNote(bws,bLast+5,BCOLS.length,'Entries are stored only in your browser (localStorage).');
+  /* ---------- ALLOCATION PLAN ---------- */
   if(window.FD_PLAN){
     const P=window.FD_PLAN;
-    const plRows=P.items.map(it=>[it.p.name,it.p.cat==='SME'?'SME':'Mainboard',it.p.dOpen,it.p.dClose,it.w.to+(it.w.est?' (est.)':''),
-      it.apps.map(a=>a.cat+' x'+a.lots+' @ '+a.basis).join(' + ')||'not funded',
-      it.apps.reduce((x,y)=>x+y.amt,0),
+    const aws=wb.addWorksheet('Allocation Plan',{views:[{state:'frozen',ySplit:4}]});
+    const ACOLS=[{h:'IPO',w:28},{h:'Board',w:10},{h:'Open',w:11},{h:'Close',w:11},{h:'Blocked Till',w:14},
+      {h:'Applications & Method',w:46},{h:'Amount ₹',w:14,align:'right',fmt:FMT_INR},
+      {h:'Exp. Profit (EV) ₹',w:15,align:'right',fmt:FMT_INR},{h:'Verdict',w:8,align:'right'}];
+    brandHeader(aws,'Capital Allocation Plan — next '+P.settings.horizon+' days · budget '+('₹'+P.settings.budget.toLocaleString('en-IN')),ACOLS.length);
+    const aRows=P.items.map(it=>[it.p.name,it.p.cat==='SME'?'SME':'Mainboard',it.p.dOpen,it.p.dClose,
+      it.w.to+(it.w.est?' (est.)':''),
+      it.apps.map(a=>a.cat+' × '+a.lots.toLocaleString('en-IN')+' lots @ '+a.basis).join('  +  ')||'not funded',
+      it.apps.reduce((x,y)=>x+y.amt,0)||'',
       it.apps.some(a=>a.exp!=null)?Math.round(it.apps.reduce((x,y)=>x+(y.exp||0),0)):'',
       it.v.score]);
-    plRows.push([],['Budget',P.settings.budget],['Total applications',P.totApplied],['Expected profit (EV)',Math.round(P.totEV||0)],['Peak blocked',P.peak],['Generated',P.generated]);
-    XLSX.utils.book_append_sheet(wb,sheetFrom(plRows,
-      ['IPO','Board','Open','Close','Funds Blocked Till','Applications & Method','Amount ₹','Exp. Profit (EV) ₹','Verdict Score']),'Allocation Plan');
+    const aLast=styledTable(aws,4,ACOLS,aRows);
+    if(P.items.length)
+      aws.addConditionalFormatting({ref:'H5:H'+(aLast+1),rules:[{type:'dataBar',minLength:0,maxLength:100,
+        cfvo:[{type:'num',value:0},{type:'num',value:Math.max(1,P.totEV)}],color:{argb:XC.green},priority:1}]});
+    const sr=aws.getRow(aLast+2);
+    [['PLAN TOTAL',1],[P.totApplied,7],[Math.round(P.totEV||0),8]].forEach(([v,c])=>{
+      const cell=sr.getCell(c);cell.value=v;cell.font={bold:true,size:11,color:{argb:XC.greenD}};
+      if(c>1)cell.numFmt=FMT_INR;});
+    footNote(aws,aLast+4,ACOLS.length,'Peak blocked on one day: ₹'+P.peak.toLocaleString('en-IN')+'. Generated '+P.generated+'.');
   }
-  /* Sources & disclaimer */
-  const src=[
-    ['Field','Source'],
-    ['IPO list, prices, issue size','Chittorgarh.com public report 82 (via app data feed)'],
-    ['Open/Close/Allotment/Refund/Listing dates','Chittorgarh.com public timetable report 118'],
+  /* ---------- SOURCES ---------- */
+  const sws=wb.addWorksheet('Sources');
+  brandHeader(sws,'Data sources & methodology',2);
+  sws.getColumn(1).width=40;sws.getColumn(2).width=100;
+  const src=[['IPO list, prices, issue size','Chittorgarh.com public report 82 (via app data feed)'],
+    ['Open/Close/Allotment/Refund/Listing dates','Chittorgarh.com public timetable report 118 (NSE/BSE published schedules)'],
     ['Live subscription (QIB/sHNI/bHNI/NII/Retail)','Chittorgarh.com public report 21 (NSE+BSE bid data)'],
     ['GMP (grey market premium)','ipowatch.in & ipopremium.in public pages — UNOFFICIAL, not exchange data'],
-    ['Lot size, quota details','Chittorgarh IPO detail pages'],
+    ['Allotment odds & EV method','SEBI framework: Retail lottery P=1/x · sHNI/bHNI proportionate with min-lot floor · QIB proportionate (lots ÷ x). Category minimums: sHNI > ₹2,00,000 · bHNI > ₹10,00,000 · QIB bid > ₹2,00,000'],
     ['My Book P&L / XIRR / Yield','Your own entries stored in this browser (localStorage)'],
-    ['Allocation plan','Computed in-app from the above; SEBI category minimums: sHNI > ₹2,00,000, bHNI > ₹10,00,000'],
-    [],
-    ['Exported',new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST'],
-    ['Disclaimer','Education only. Not investment advice. Verify all dates & prices on NSE/BSE/RHP before applying. Estimates are indicative; registrar basis of allotment governs actual allotment.']
-  ];
-  const ws=XLSX.utils.aoa_to_sheet(src);ws['!cols']=[{wch:42},{wch:95}];
-  XLSX.utils.book_append_sheet(wb,ws,'Sources');
-  XLSX.writeFile(wb,'FinDeependence-IPO-Tracker_'+localISO()+'.xlsx');
+    ['Exported',nowIST()]];
+  const sLast=styledTable(sws,4,[{h:'Field',w:40},{h:'Source / Method',w:100}],src);
+  footNote(sws,sLast+2,2);
+  await xlsxDownload(wb,'FinDeependence-IPO-Tracker_'+localISO()+'.xlsx');
 }
-function exportIPO(slug){
+async function exportIPO(slug){
   if(!ensureXLSX())return;
   const p=IPOS.find(x=>x.slug===slug);if(!p)return;
-  const wb=XLSX.utils.book_new();
+  const wb=new ExcelJS.Workbook();
+  wb.creator='FinDeependence — CA Deep Dalal';
+  const ws=wb.addWorksheet('Overview');
+  ws.getColumn(1).width=30;ws.getColumn(2).width=52;
+  brandHeader(ws,(p.full||p.name),2);
   const v=verdict(p);
-  const kv=[['Field','Value'],
-    ['Company',p.full||p.name],['Board',p.cat==='SME'?'SME':'Mainboard'],['Status',p.status],
-    ['Open Date',p.dOpen||'TBA'],['Close Date',p.dClose||'TBA'],['Allotment (BoA)',p.dBoa||'TBA'],
-    ['Refund',p.dRef||'TBA'],['Listing',p.dList||'TBA'],
-    ['Issue/Allotment Price ₹',p.price??'TBA'],['Lot Size',p.lot??'TBA'],
-    ['Retail 1 Lot ₹',p.price&&p.lot?p.price*p.lot:'TBA'],
-    ['sHNI Min',p.price&&p.lot?minLotsFor(200000,p.price,p.lot)+' lots = ₹'+(minLotsFor(200000,p.price,p.lot)*p.price*p.lot).toLocaleString('en-IN'):'TBA'],
-    ['bHNI Min',p.price&&p.lot?minLotsFor(1000000,p.price,p.lot)+' lots = ₹'+(minLotsFor(1000000,p.price,p.lot)*p.price*p.lot).toLocaleString('en-IN'):'TBA'],
-    ['Issue Size ₹Cr',p.sizeCr??'—'],['GMP ₹',p.gmp?p.gmp.val:'—'],['GMP %',p.gmp?p.gmp.pct:'—'],
-    ['Est. Listing ₹',p.gmp&&p.price?p.price+p.gmp.val:(p.estPrice||'—')],
-    ['Subscription Total (x)',p.sub.total??'—'],['QIB (x)',p.sub.qib??'—'],['sHNI (x)',p.sub.shni??'—'],
-    ['bHNI (x)',p.sub.bhni??'—'],['NII (x)',p.sub.nii??'—'],['Retail (x)',p.sub.rii??'—'],
-    ['Verdict Score',v.score],['Verdict',v.label],
-    ['Lead Manager',p.lead||'—'],['ISIN',p.isin||'—'],
-    [],[ 'Sources','Chittorgarh reports 82/118/21 (list, dates, subscription); GMP: ipowatch.in / ipopremium.in (unofficial)'],
-    ['Exported',new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST'],
-    ['Disclaimer','Education only. Not investment advice. Verify on NSE/BSE/RHP.']];
-  const ws=XLSX.utils.aoa_to_sheet(kv);ws['!cols']=[{wch:26},{wch:60}];
-  XLSX.utils.book_append_sheet(wb,ws,'Overview');
+  const sec=(row,txt)=>{ws.mergeCells(row,1,row,2);const c=ws.getCell(row,1);
+    c.value=txt;c.font={bold:true,size:11,color:{argb:XC.white}};
+    c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.teal}};
+    c.alignment={indent:1};ws.getRow(row).height=20;};
+  let r=4;
+  const kv=(k,val,fmt)=>{
+    const a=ws.getCell(r,1),b=ws.getCell(r,2);
+    a.value=k;a.font={size:10,color:{argb:XC.mut}};
+    b.value=val;b.font={bold:true,size:10,color:{argb:XC.ink}};
+    if(fmt)b.numFmt=fmt;
+    [a,b].forEach(c=>{c.border=xBorder();if(r%2===0)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:XC.band}};});
+    r++;};
+  sec(r++,'Issue Details');
+  kv('Board',p.cat==='SME'?'SME':'Mainboard');kv('Status',p.status.toUpperCase());
+  kv('Issue / Allotment Price ₹',p.price??'TBA','#,##0');kv('Lot Size (shares)',p.lot??'TBA');
+  kv('Retail 1 Lot ₹',p.price&&p.lot?p.price*p.lot:'TBA',FMT_INR);
+  kv('Issue Size ₹Cr',p.sizeCr??'—','#,##0');kv('Lead Manager',p.lead||'—');kv('ISIN',p.isin||'—');
+  sec(r++,'Key Dates (NSE/BSE via Chittorgarh timetable)');
+  kv('Open',p.dOpen||'TBA');kv('Close',p.dClose||'TBA');kv('Allotment (BoA)',p.dBoa||'TBA');
+  kv('Refund / Unblock',p.dRef||'TBA');kv('Listing',p.dList||'TBA');
+  sec(r++,'Category Minimums (SEBI)');
+  if(p.price&&p.lot){
+    const sl=minLotsFor(200000,p.price,p.lot),bl=minLotsFor(1000000,p.price,p.lot);
+    kv('sHNI minimum',sl+' lots = ₹'+(sl*p.price*p.lot).toLocaleString('en-IN'));
+    kv('bHNI minimum',bl+' lots = ₹'+(bl*p.price*p.lot).toLocaleString('en-IN'));
+    kv('QIB minimum bid','> ₹2,00,000 ('+sl+' lots)');
+  } else kv('Minimums','TBA — price/lot not announced');
+  sec(r++,'Live Demand (subscription ×)');
+  kv('Total',p.sub.total??'—',FMT_X);kv('QIB (institutions)',p.sub.qib??'—',FMT_X);
+  kv('sHNI ₹2–10L',p.sub.shni??'—',FMT_X);kv('bHNI ₹10L+',p.sub.bhni??'—',FMT_X);kv('Retail',p.sub.rii??'—',FMT_X);
+  sec(r++,'Grey Market (unofficial)');
+  kv('GMP ₹',p.gmp?p.gmp.val:'—');kv('GMP %',p.gmp?p.gmp.pct:'—',FMT_PCT);
+  kv('Est. Listing ₹',p.gmp&&p.price?p.price+p.gmp.val:(p.estPrice||'—'),'#,##0');
+  sec(r++,'Verdict');
+  kv('Score (0–100)',v.score);kv('Reading',v.label);
+  v.reasons.slice(0,6).forEach((x,i)=>kv('Why #'+(i+1),x[1]));
+  footNote(ws,r+1,2);
+  /* history sheet + GMP trend chart */
   const hist=histOf(slug);
   if(hist.length){
-    const hRows=hist.map(h=>[h.t?new Date(h.t).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}):'',h.g??'',h.tot??'',h.qib??'',h.rii??'']);
-    XLSX.utils.book_append_sheet(wb,sheetFrom(hRows,['Recorded At (IST)','GMP ₹','Total (x)','QIB (x)','Retail (x)']),'GMP & Sub History');
+    const hws=wb.addWorksheet('GMP & Sub Trend',{views:[{state:'frozen',ySplit:4}]});
+    const HCOLS=[{h:'Recorded At (IST)',w:22},{h:'GMP ₹',w:9,align:'right'},{h:'Total (x)',w:10,align:'right',fmt:FMT_X},
+      {h:'QIB (x)',w:10,align:'right',fmt:FMT_X},{h:'Retail (x)',w:10,align:'right',fmt:FMT_X}];
+    brandHeader(hws,(p.full||p.name)+' — GMP & subscription trend',HCOLS.length);
+    const hLast=styledTable(hws,4,HCOLS,hist.map(h=>[
+      h.t?new Date(h.t).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}):'',h.g??'',h.tot??'',h.qib??'',h.rii??'']));
+    const gpts=hist.filter(h=>h.g!=null);
+    if(gpts.length>=2)
+      addChart(wb,hws,chartPNG('GMP journey (₹) — '+p.name,
+        gpts.map(h=>new Date(h.t).toLocaleDateString('en-IN',{day:'numeric',month:'short'})),
+        gpts.map(h=>h.g),{color:'#1fa463',fmt:v=>'₹'+v}),hLast+2,0);
+    footNote(hws,hLast+22,HCOLS.length,'Trend recorded on this device while the app was open.');
   }
-  XLSX.writeFile(wb,'FD_'+(p.slug||p.name).replace(/[^\w-]+/g,'-')+'_'+localISO()+'.xlsx');
+  await xlsxDownload(wb,'FD_'+(p.slug||p.name).replace(/[^\w-]+/g,'-')+'_'+localISO()+'.xlsx');
 }
 </script>
 
