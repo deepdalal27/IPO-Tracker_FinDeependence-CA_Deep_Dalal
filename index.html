@@ -350,6 +350,10 @@ function num(s){const v=parseFloat(String(s??'').replace(/&#\d+;/g,'').replace(/
 function nameKey(s){return String(s??'').toLowerCase().replace(/\b(ltd|limited|ipo|india|the|company|co)\b/g,'').replace(/[^a-z0-9]/g,'');}
 function nameMatch(a,b){const x=nameKey(a),y=nameKey(b);if(!x||!y)return false;return x===y||x.startsWith(y)||y.startsWith(x);}
 function isoDay(s){const m=String(s??'').match(/^(\d{4}-\d{2}-\d{2})/);return m?m[1]:null;}
+const FD_MONS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDMY(iso){const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?(+m[3])+'-'+FD_MONS[+m[2]-1]+'-'+m[1]:null;}
+/* display rule: machine ISO date (authoritative, drives status) first; feed's cosmetic string only as fallback */
+function dispDate(iso,str){return fmtDMY(iso)||String(str||'').trim()||'\u2014';}
 function localISO(d){d=d||new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function statusFrom(dOpen,dClose,dList,today){
   const t=today||localISO(); /* FIX: was UTC toISOString — showed wrong status 00:00–05:30 IST */
@@ -618,7 +622,7 @@ async function load(){
       const tt=ttBy[b.slug]||{};
       const su=subBy[b.slug]||{};
       const g=gmps.find(x=>nameMatch(x.name,b.name)||nameMatch(x.name,b.full))||null;
-      const dOpen=b.dOpen||tt.dOpen, dClose=tt.dClose||b.dClose, dList=tt.dList||b.dList;
+      const dOpen=tt.dOpen||b.dOpen, dClose=tt.dClose||b.dClose, dList=tt.dList||b.dList; /* FIX: timetable report 118 is the authoritative date source for all four dates */
       const price=b.price||((g&&g.price)||null);
       const st0=statusFrom(dOpen,dClose,dList,today);
       const p={
@@ -770,7 +774,7 @@ function card(p){
       <div class="fact"><div class="k">GMP*</div><div class="v">${gmp}</div></div>
       <div class="fact"><div class="k">Issue Size</div><div class="v">${esc(p.size)}</div></div>
     </div>
-    <div class="dates"><span>Open<b>${esc(p.open)||'—'}</b></span><span>Close<b>${esc(p.close)||'—'}</b></span><span>Allotment<b>${esc(p.boa)||'—'}</b></span><span>Listing<b>${esc(p.listing)||'—'}</b></span></div>
+    <div class="dates"><span>Open<b>${dispDate(p.dOpen,p.open)}</b></span><span>Close<b>${dispDate(p.dClose,p.close)}</b></span><span>Allotment<b>${dispDate(p.dBoa,p.boa)}</b></span><span>Listing<b>${dispDate(p.dList,p.listing)}</b></span></div>
     ${hasSub?`<div class="subs"><h4><span>Live Subscription</span><span class="tot">Total ${p.sub.total.toFixed(2)}x</span></h4>
       ${subRow('QIB',p.sub.qib)}${subRow('sHNI',p.sub.shni)}${subRow('bHNI',p.sub.bhni)}${subRow('Retail',p.sub.rii)}</div>`:''}
     <div class="verdict ${v.cls}"><div class="vscore">${v.score}</div>
@@ -890,7 +894,7 @@ function openDetail(slug){
       <div class="fact"><div class="k">Est. Listing</div><div class="v">${est?fmtINR(est):'—'}</div></div>
       ${p.apps?`<div class="fact"><div class="k">Applications</div><div class="v">${esc(p.apps)}</div></div>`:''}
     </div>
-    <div class="dates" style="margin-top:10px"><span>Open<b>${esc(p.open)||'—'}</b></span><span>Close<b>${esc(p.close)||'—'}</b></span><span>Allotment<b>${esc(p.boa)||'—'}</b></span><span>Refunds<b>${p.dRef?new Date(p.dRef).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—'}</b></span><span>Listing<b>${esc(p.listing)||'—'}</b></span></div>
+    <div class="dates" style="margin-top:10px"><span>Open<b>${dispDate(p.dOpen,p.open)}</b></span><span>Close<b>${dispDate(p.dClose,p.close)}</b></span><span>Allotment<b>${dispDate(p.dBoa,p.boa)}</b></span><span>Refunds<b>${dispDate(p.dRef,'')}</b></span><span>Listing<b>${dispDate(p.dList,p.listing)}</b></span></div>
     </div>
 
     ${qRows?`<div class="sect"><h3>Quota & Share Breakdown <span class="rt">${exact?'exact (from RHP)':'estimated'}</span></h3>
@@ -1254,7 +1258,15 @@ load();setInterval(load,AUTO_MS);
    21 (subscription); GMP: ipowatch.in / ipopremium.in public pages.
    ================================================================ */
 
-/* ---------------- Allocation Planner ---------------- */
+/* ---------------- Allocation Planner (v3 — expected-value engine) ----------------
+   Ranking method (per user spec):
+   1. LIVE DATA: expected profit per rupee via calcOutcome() —
+      Retail: P(1 lot)=1/x lottery · sHNI/bHNI: proportionate with SEBI min-lot floor
+      QIB: pure proportionate (lots ÷ x)
+   2. NO SUBSCRIPTION YET: rank by GMP "highest possible gain" (full allotment assumed, flagged)
+   3. NO GMP EITHER: ranked last by verdict score, flagged "insufficient data"
+   QIB sizing: pure priority — best-EV IPO filled to window capacity first (user choice).
+------------------------------------------------------------------------------------ */
 const PLAN_KEY='fd_plan_settings';
 function planSettings(){
   let s;try{s=JSON.parse(localStorage.getItem(PLAN_KEY)||'{}')}catch(e){s={}}
@@ -1271,14 +1283,39 @@ function planSave(){
   render();
 }
 function addDaysISO(iso,n){const d=new Date(iso+'T00:00:00');d.setDate(d.getDate()+n);return localISO(d);}
-function blockEnd(p){ // date till which ASBA keeps funds blocked
+function blockEnd(p){
   if(p.dRef) return {end:p.dRef,est:false,src:'refund date from Chittorgarh timetable'};
   if(p.dBoa) return {end:addDaysISO(p.dBoa,1),est:true,src:'allotment date +1 day (refund date not yet published)'};
   if(p.dClose)return {end:addDaysISO(p.dClose,4),est:true,src:'close +4 days estimate (timetable not yet published)'};
   return {end:null,est:true,src:'dates not yet published'};
 }
+/* EV per category. Unit = minimum permissible application:
+   Retail 1 lot · sHNI min lots >₹2L · bHNI min lots >₹10L · QIB min lots >₹2L (QIB must bid above ₹2L) */
+function planEV(p,cat){
+  const price=p.price,lot=p.lot;if(!price||!lot)return null;
+  const lv=price*lot, g=p.gmp?p.gmp.val:null;
+  const unitLots=cat==='rii'?1
+    :cat==='shni'?(minLotsFor(200000,price,lot)||1)
+    :cat==='bhni'?(minLotsFor(1000000,price,lot)||1)
+    :(minLotsFor(200000,price,lot)||1);
+  let x=effSub(p,cat==='qib'?'qib':cat);
+  if(x==null&&(cat==='shni'||cat==='bhni'))x=p.sub.nii;
+  let flag='live';
+  if(x==null){x=1;flag=(g!=null?'presub':'nodata');}
+  const o=calcOutcome(cat,x,unitLots,1,price,lot,g,0,0,cat==='qib'?unitLots:null);
+  const unitCost=unitLots*lv;
+  const ev=(o&&o.expProfit!=null&&unitCost)?o.expProfit/unitCost:null;
+  return {cat,x,flag,unitLots,unitCost,ev,o,g,lv};
+}
+function evBasis(e){
+  if(!e)return '';
+  if(e.flag==='live')return e.x.toFixed(1)+'x sub (live)';
+  if(e.flag==='presub')return 'pre-sub — full allotment assumed';
+  return 'no GMP/sub data — verdict rank';
+}
 function computePlan(){
-  const s=planSettings(), today=localISO(), lastOpen=addDaysISO(today,s.horizon);
+  const s=planSettings(),today=localISO(),lastOpen=addDaysISO(today,s.horizon);
+  const anyCat=s.retail||s.shni||s.bhni||s.qib;
   const cands=IPOS.filter(p=>p.dOpen&&p.dClose&&(p.status==='open'||p.status==='upcoming')
     &&p.dOpen<=lastOpen&&p.dClose>=today);
   const plannable=[],tba=[];
@@ -1289,49 +1326,90 @@ function computePlan(){
   const daysIn=w=>{const out=[];let d=w.from,g=0;while(d<=w.to&&g++<120){out.push(d);d=addDaysISO(d,1);}return out;};
   const fits=(w,amt)=>amt>0&&daysIn(w).every(d=>(used[d]||0)+amt<=s.budget);
   const take=(w,amt)=>daysIn(w).forEach(d=>used[d]=(used[d]||0)+amt);
+  const capIn=w=>{let m=Infinity;daysIn(w).forEach(d=>{m=Math.min(m,s.budget-(used[d]||0))});
+    return m===Infinity?0:Math.max(0,m);};
   const items=plannable.map(p=>{
-    const lotCost=p.price*p.lot;
-    const shniLots=minLotsFor(200000,p.price,p.lot), bhniLots=minLotsFor(1000000,p.price,p.lot);
-    return {p,v:verdict(p),w:winOf(p),lotCost,shniLots,bhniLots,
-      shniCost:shniLots?shniLots*lotCost:null,bhniCost:bhniLots?bhniLots*lotCost:null,
-      apps:[],slots:s.pans};
+    const it={p,v:verdict(p),w:winOf(p),lotCost:p.price*p.lot,apps:[],slots:s.pans,evs:{}};
+    ['rii','shni','bhni','qib'].forEach(c=>it.evs[c]=planEV(p,c));
+    return it;
   });
-  const bySc=[...items].sort((a,b)=>(b.v.score-a.v.score)||(((b.p.gmp&&b.p.gmp.pct)||0)-((a.p.gmp&&a.p.gmp.pct)||0)));
+  /* ranking key: best EV among ENABLED categories; no-data ranked below all EV-ranked, ordered by verdict */
+  const enabledCats=[s.retail&&'rii',s.shni&&'shni',s.bhni&&'bhni',s.qib&&'qib'].filter(Boolean);
+  const rankKey=it=>{
+    let best=null;
+    enabledCats.forEach(c=>{const e=it.evs[c];if(e&&e.ev!=null&&(best==null||e.ev>best))best=e.ev;});
+    return best!=null?best:(-1e6+it.v.score);
+  };
+  const bySc=[...items].sort((a,b)=>rankKey(b)-rankKey(a));
   const uncovered=[];
-  /* Pass 1 — cover EVERY IPO with 1 application first (open-date order) */
-  [...items].sort((a,b)=>a.p.dOpen.localeCompare(b.p.dOpen)).forEach(it=>{
-    if(s.retail&&fits(it.w,it.lotCost)){take(it.w,it.lotCost);it.apps.push({cat:'Retail',lots:1,amt:it.lotCost});it.slots--;}
-    else if(s.shni&&it.shniCost&&fits(it.w,it.shniCost)){take(it.w,it.shniCost);it.apps.push({cat:'sHNI',lots:it.shniLots,amt:it.shniCost});it.slots--;}
-    else uncovered.push(it);
-  });
-  /* Pass 2a — extra family PANs: +1 retail lot per free PAN, best-scored IPOs first */
-  if(s.retail)bySc.forEach(it=>{
-    while(it.slots>0&&it.apps.length&&fits(it.w,it.lotCost)){
-      take(it.w,it.lotCost);it.apps.push({cat:'Retail',lots:1,amt:it.lotCost});it.slots--;}
-  });
-  /* Pass 2b — leftover budget: upgrade best-scored IPOs Retail→sHNI, then →bHNI */
-  if(s.shni)bySc.forEach(it=>{
-    if(!it.apps.length||!it.shniCost||it.apps.some(a=>a.cat!=='Retail'))return;
-    const r=it.apps[0], delta=it.shniCost-r.amt;
-    if(delta>0&&fits(it.w,delta)){take(it.w,delta);r.cat='sHNI';r.lots=it.shniLots;r.amt=it.shniCost;}
-  });
-  if(s.bhni)bySc.forEach(it=>{
-    if(!it.apps.length||!it.bhniCost)return;
-    const h=it.apps.find(a=>a.cat==='sHNI')||it.apps.find(a=>a.cat==='Retail');
-    if(!h)return;
-    const delta=it.bhniCost-h.amt;
-    if(delta>0&&fits(it.w,delta)){take(it.w,delta);h.cat='bHNI';h.lots=it.bhniLots;h.amt=it.bhniCost;}
-  });
+  const pushApp=(it,e,lots,amtOverride)=>{
+    const amt=amtOverride!=null?amtOverride:e.unitCost*(lots/e.unitLots);
+    const exp=(e.o&&e.o.expProfit!=null)?e.o.expProfit*(lots/e.unitLots):null;
+    it.apps.push({cat:e.cat==='rii'?'Retail':e.cat==='shni'?'sHNI':e.cat==='bhni'?'bHNI':'QIB',
+      lots,amt,exp,basis:evBasis(e),flag:e.flag});
+  };
+  /* Pass 1 — cover every IPO (individual categories only; QIB is pure-priority by user's choice) */
+  if(s.retail||s.shni||s.bhni){
+    [...items].sort((a,b)=>a.p.dOpen.localeCompare(b.p.dOpen)).forEach(it=>{
+      const er=it.evs.rii,es=it.evs.shni,eb=it.evs.bhni;
+      if(s.retail&&er&&fits(it.w,er.unitCost)){take(it.w,er.unitCost);pushApp(it,er,1);it.slots--;}
+      else if(s.shni&&es&&fits(it.w,es.unitCost)){take(it.w,es.unitCost);pushApp(it,es,es.unitLots);it.slots--;}
+      else if(s.bhni&&eb&&fits(it.w,eb.unitCost)){take(it.w,eb.unitCost);pushApp(it,eb,eb.unitLots);it.slots--;}
+      else uncovered.push(it);
+    });
+    /* Pass 2a — extra family PANs: +1 retail lot each, best-EV IPOs first */
+    if(s.retail)bySc.forEach(it=>{
+      const er=it.evs.rii;if(!er)return;
+      while(it.slots>0&&it.apps.length&&fits(it.w,er.unitCost)){
+        take(it.w,er.unitCost);pushApp(it,er,1);it.slots--;}
+    });
+    /* Pass 2b — leftover: upgrade best-EV IPOs Retail→sHNI→bHNI */
+    if(s.shni)bySc.forEach(it=>{
+      const es=it.evs.shni;
+      if(!es||!it.apps.length||it.apps.some(a=>a.cat!=='Retail'))return;
+      const r=it.apps[0],delta=es.unitCost-r.amt;
+      if(delta>0&&fits(it.w,delta)){take(it.w,delta);
+        it.apps[0]={cat:'sHNI',lots:es.unitLots,amt:es.unitCost,exp:es.o&&es.o.expProfit,basis:evBasis(es),flag:es.flag};}
+    });
+    if(s.bhni)bySc.forEach(it=>{
+      const eb=it.evs.bhni;if(!eb||!it.apps.length)return;
+      const i=it.apps.findIndex(a=>a.cat==='sHNI');
+      const j=i>=0?i:it.apps.findIndex(a=>a.cat==='Retail');
+      if(j<0)return;
+      const delta=eb.unitCost-it.apps[j].amt;
+      if(delta>0&&fits(it.w,delta)){take(it.w,delta);
+        it.apps[j]={cat:'bHNI',lots:eb.unitLots,amt:eb.unitCost,exp:eb.o&&eb.o.expProfit,basis:evBasis(eb),flag:eb.flag};}
+    });
+  }
+  /* Pass 3 — QIB: pure priority. Best-EV IPO filled to full window capacity, then next. */
+  if(s.qib){
+    [...items].sort((a,b)=>{
+      const ea=a.evs.qib,eb=b.evs.qib;
+      const ka=ea&&ea.ev!=null?ea.ev:(-1e6+a.v.score), kb=eb&&eb.ev!=null?eb.ev:(-1e6+b.v.score);
+      return kb-ka;
+    }).forEach(it=>{
+      const e=it.evs.qib;if(!e)return;
+      const cap=capIn(it.w);
+      const lots=Math.floor(cap/e.lv);
+      if(lots>=e.unitLots){
+        const amt=lots*e.lv;
+        take(it.w,amt);
+        const exp=(e.o&&e.o.expProfit!=null)?e.o.expProfit*(lots/e.unitLots):null;
+        it.apps.push({cat:'QIB',lots,amt,exp,basis:evBasis(e),flag:e.flag});
+      }else if(!it.apps.length)uncovered.push(it);
+    });
+  }
   const totApplied=items.reduce((a,it)=>a+it.apps.reduce((x,y)=>x+y.amt,0),0);
+  const totEV=items.reduce((a,it)=>a+it.apps.reduce((x,y)=>x+(y.exp||0),0),0);
   const peak=Object.values(used).reduce((a,b)=>Math.max(a,b),0);
-  window.FD_PLAN={settings:s,items,tba,uncovered,used,totApplied,peak,today,
+  window.FD_PLAN={settings:s,anyCat,items,tba,uncovered:[...new Set(uncovered)],used,totApplied,totEV,peak,today,
     generated:new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})};
   return window.FD_PLAN;
 }
 function planHTML(){
   const s=planSettings();
   const P=computePlan();
-  const fmtD=iso=>iso?new Date(iso+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—';
+  const fmtD=iso=>iso?fmtDMY(iso).replace(/-\d{4}$/,''):'—';
   const inputs=`<div class="plan-inputs">
     <h3>💰 Capital Allocation Planner — next <b>${s.horizon}</b> days</h3>
     <div class="pi-row">
@@ -1346,30 +1424,32 @@ function planHTML(){
       <label><input id="pl-qib" type="checkbox" ${s.qib?'checked':''}> QIB*</label>
       <button class="pl-go" onclick="planSave()">↻ Recalculate</button>
     </div>
-    <div class="small">*QIB is reserved for SEBI-registered institutions (MFs, FPIs, banks). Individuals cannot bid in the QIB book — tick only if you apply through a QIB entity; the planner shows QIB subscription data but auto-allocates only Retail/sHNI/bHNI.</div>
-    <div class="small">Strategy: 1) cover <b>every</b> IPO with one application → 2) extra PANs on best-scored IPOs → 3) leftover budget upgrades best IPOs to sHNI/bHNI. ASBA rule respected: on any single day, total blocked money never exceeds your budget; money released after refund date is reused automatically.</div>
+    <div class="small">*QIB is reserved for SEBI-registered institutions (MFs, FPIs, banks) — tick only if you bid through a QIB entity. QIB allotment is proportionate (bid lots ÷ subscription); minimum QIB bid must exceed ₹2 lakh.</div>
+    <div class="small"><b>Method:</b> IPOs ranked by <b>expected profit per rupee</b> — Retail: GMP × P(1 lot)=1/x lottery · sHNI/bHNI: proportionate with SEBI min-lot floor · QIB: lots ÷ x. No subscription yet → GMP highest-possible-gain (flagged). No GMP either → verdict rank. Retail/sHNI/bHNI: every IPO covered first, then best get more. QIB: pure priority — top-ranked IPO takes all available window capital, then the next. ASBA respected: daily blocked total never exceeds budget; refunds recycle automatically.</div>
   </div>`;
+  if(!P.anyCat)
+    return `<div class="calwrap">${inputs}<div class="clash"><h3>⚠️ No category selected</h3><div class="small">Tick at least one of Retail / sHNI / bHNI / QIB and hit Recalculate.</div></div></div>`;
   if(!P.items.length&&!P.tba.length)
-    return `<div class="calwrap">${inputs}<div class="note">No open or upcoming IPOs with published dates in the next ${s.horizon} days. Hit ⟳ Refresh, or widen the horizon.</div></div>`;
+    return `<div class="calwrap">${inputs}<div class="note">No open or upcoming IPOs with published price & lot in the next ${s.horizon} days. Hit ⟳ Refresh, or widen the horizon.</div></div>`;
+  const qibOnly=s.qib&&!s.retail&&!s.shni&&!s.bhni;
   const rows=P.items.sort((a,b)=>a.p.dOpen.localeCompare(b.p.dOpen)).map(it=>{
     const appsTxt=it.apps.length
-      ? it.apps.map(a=>`${a.cat}${a.lots>1?' ('+a.lots+' lots)':' (1 lot)'} — ${fmtINR(a.amt)}`).join('<br>')
-      : '<span class="pl-skip">Not funded — budget exhausted in this window</span>';
+      ? it.apps.map(a=>`<b>${a.cat}</b> · ${a.lots.toLocaleString('en-IN')} lot${a.lots>1?'s':''} — ${fmtINR(a.amt)}<br><small>@ ${a.basis}${a.exp!=null?' → exp. '+fmtINR(a.exp):''}</small>`).join('<br>')
+      : `<span class="pl-skip">${qibOnly?'Lower QIB priority — budget concentrated in higher-EV IPOs':'Budget fully blocked during this window'}</span>`;
     const tot=it.apps.reduce((x,y)=>x+y.amt,0);
-    const estP=it.p.gmp&&it.p.gmp.val!=null
-      ? it.apps.reduce((x,a)=>x+it.p.gmp.val*it.p.lot*a.lots,0):null;
+    const ev=it.apps.reduce((x,y)=>x+(y.exp||0),0);
     return `<tr>
       <td><b onclick="openDetail('${it.p.slug}')" style="cursor:pointer">${esc(it.p.name)}</b><br>
-        <small>${it.p.cat==='SME'?'SME':'Mainboard'} · score ${it.v.score}</small></td>
+        <small>${it.p.cat==='SME'?'SME':'Mainboard'} · score ${it.v.score}${it.p.gmp?` · GMP ₹${it.p.gmp.val}`:' · no GMP'}</small></td>
       <td>${fmtD(it.p.dOpen)} → ${fmtD(it.p.dClose)}<br><small>blocked till ${fmtD(it.w.to)}${it.w.est?' (est.)':''}</small></td>
       <td>${fmtINR(it.lotCost)}<br><small>${it.p.lot} sh × ₹${it.p.price}</small></td>
       <td>${appsTxt}</td>
       <td class="r">${tot?fmtINR(tot):'—'}</td>
-      <td class="r">${estP!=null?fmtINR(estP):'—'}</td>
+      <td class="r">${it.apps.length&&it.apps.some(a=>a.exp!=null)?fmtINR(ev):'—'}</td>
     </tr>`;
   }).join('');
   const tbaHtml=P.tba.length?`<div class="note">⏳ Also opening in this window but <b>price/lot not announced yet</b> (re-plan once announced): ${P.tba.map(p=>esc(p.name)+' ('+fmtD(p.dOpen)+')').join(' · ')}</div>`:'';
-  const uncHtml=P.uncovered.length?`<div class="clash"><h3>⚠️ Budget could not cover</h3><div class="small">${P.uncovered.map(it=>`${esc(it.p.name)} — needs ${fmtINR(it.lotCost)} during ${fmtD(it.w.from)}–${fmtD(it.w.to)} when budget is fully blocked`).join('<br>')}</div></div>`:'';
+  const uncHtml=P.uncovered.length?`<div class="clash"><h3>⚠️ Not funded</h3><div class="small">${P.uncovered.map(it=>`${esc(it.p.name)} — ${qibOnly?'below cut-off in QIB priority order':'needs '+fmtINR(it.lotCost)+' during '+fmtD(it.w.from)+'–'+fmtD(it.w.to)+' when budget is fully blocked'}`).join('<br>')}</div></div>`:'';
   const dayKeys=Object.keys(P.used).sort();
   const bars=dayKeys.map(k=>{
     const v=P.used[k],pct=Math.min(100,v/P.settings.budget*100);
@@ -1382,15 +1462,16 @@ function planHTML(){
       <div class="ps-card"><b>${fmtINR(P.settings.budget)}</b><small>Budget</small></div>
       <div class="ps-card"><b>${fmtINR(P.totApplied)}</b><small>Total applications</small></div>
       <div class="ps-card"><b>${fmtINR(P.peak)}</b><small>Peak blocked on one day</small></div>
-      <div class="ps-card"><b>${P.items.filter(i=>i.apps.length).length}/${P.items.length+P.tba.length}</b><small>IPOs covered</small></div>
+      <div class="ps-card"><b>${P.totEV?fmtINR(P.totEV):'—'}</b><small>Expected profit (EV)*</small></div>
+      <div class="ps-card"><b>${P.items.filter(i=>i.apps.length).length}/${P.items.length+P.tba.length}</b><small>IPOs funded</small></div>
     </div>
     <div class="plan-tbl-wrap"><table class="plan-tbl">
-      <tr><th>IPO</th><th>Bid window / funds blocked</th><th>1 lot cost</th><th>Planned applications</th><th class="r">Amount</th><th class="r">Est. gain if allotted*</th></tr>
+      <tr><th>IPO</th><th>Bid window / funds blocked</th><th>1 lot cost</th><th>Planned applications · method</th><th class="r">Amount</th><th class="r">Exp. profit (EV)*</th></tr>
       ${rows}
     </table></div>
     ${uncHtml}${tbaHtml}
     <div class="pbar-wrap"><h3>📊 Day-by-day capital blocked (ASBA)</h3>${bars||'<div class="small">Nothing allocated yet.</div>'}</div>
-    <div class="small">*Est. gain = current GMP × shares, only if fully allotted and GMP holds — GMP is unofficial grey-market chatter and often wrong; oversubscription makes allotment a lottery. Total application amount ≠ money lost — unallotted funds are only blocked, then released. Dates from Chittorgarh timetable feed; verify open/close/refund dates on NSE/BSE or the RHP before applying. Education only — not investment advice.</div>
+    <div class="small">*Expected profit = GMP × probability-weighted allotted shares (lottery odds for Retail, pro-rata for sHNI/bHNI/QIB at current subscription). Where subscription isn't live yet, full allotment is assumed and flagged — real allotment will be lower if oversubscribed. GMP is unofficial grey-market chatter and often wrong. Application amount ≠ money at risk — unallotted funds are only blocked, then released. Dates: Chittorgarh timetable (NSE/BSE schedules); subscription: Chittorgarh report 21; GMP: ipowatch/ipopremium. Verify dates on NSE/BSE/RHP before applying. Education only — not investment advice.</div>
   </div>`;
 }
 
@@ -1444,11 +1525,13 @@ function exportExcel(){
   if(window.FD_PLAN){
     const P=window.FD_PLAN;
     const plRows=P.items.map(it=>[it.p.name,it.p.cat==='SME'?'SME':'Mainboard',it.p.dOpen,it.p.dClose,it.w.to+(it.w.est?' (est.)':''),
-      it.apps.map(a=>a.cat+' x'+a.lots).join(' + ')||'not funded',
-      it.apps.reduce((x,y)=>x+y.amt,0),it.v.score]);
-    plRows.push([],['Budget',P.settings.budget],['Total applications',P.totApplied],['Peak blocked',P.peak],['Generated',P.generated]);
+      it.apps.map(a=>a.cat+' x'+a.lots+' @ '+a.basis).join(' + ')||'not funded',
+      it.apps.reduce((x,y)=>x+y.amt,0),
+      it.apps.some(a=>a.exp!=null)?Math.round(it.apps.reduce((x,y)=>x+(y.exp||0),0)):'',
+      it.v.score]);
+    plRows.push([],['Budget',P.settings.budget],['Total applications',P.totApplied],['Expected profit (EV)',Math.round(P.totEV||0)],['Peak blocked',P.peak],['Generated',P.generated]);
     XLSX.utils.book_append_sheet(wb,sheetFrom(plRows,
-      ['IPO','Board','Open','Close','Funds Blocked Till','Applications','Amount ₹','Verdict Score']),'Allocation Plan');
+      ['IPO','Board','Open','Close','Funds Blocked Till','Applications & Method','Amount ₹','Exp. Profit (EV) ₹','Verdict Score']),'Allocation Plan');
   }
   /* Sources & disclaimer */
   const src=[
