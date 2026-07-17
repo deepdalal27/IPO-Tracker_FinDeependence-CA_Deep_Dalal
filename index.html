@@ -201,6 +201,38 @@ footer b{color:#fff}
 .disc{flex:1;min-width:260px}
 @media(max-width:640px){.facts{grid-template-columns:1fr 1fr}.creator{display:none}}
 </style>
+<style>
+/* v2: planner + excel */
+#xlsBtn{background:var(--green);color:#fff;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}
+#xlsBtn:hover{background:var(--green-dark)}
+.ipo-x{position:absolute;top:10px;right:44px;background:var(--green);color:#fff;border:0;border-radius:8px;padding:5px 10px;cursor:pointer;font:inherit;font-size:.8rem}
+.plan-inputs{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px}
+.plan-inputs h3{margin:0 0 10px}
+.pi-row{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0}
+.pi-row label{display:flex;flex-direction:column;font-size:.8rem;color:var(--muted);gap:4px}
+.pi-cats label{flex-direction:row;align-items:center;gap:6px;color:var(--ink);font-size:.85rem}
+.pi-row input[type=number]{width:130px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font:inherit}
+.pl-go{background:var(--green);color:#fff;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;font:inherit;margin-left:auto}
+.pl-go:hover{background:var(--green-dark)}
+.plan-sum{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
+.ps-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 18px;text-align:center}
+.ps-card b{display:block;font-size:1.05rem;color:var(--green-dark)}
+.ps-card small{color:var(--muted)}
+.plan-tbl-wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:14px;margin:10px 0}
+.plan-tbl{width:100%;border-collapse:collapse;font-size:.85rem}
+.plan-tbl th{background:var(--teal-soft);text-align:left;padding:9px 12px;white-space:nowrap}
+.plan-tbl td{padding:9px 12px;border-top:1px solid var(--line);vertical-align:top}
+.plan-tbl .r{text-align:right;white-space:nowrap}
+.pl-skip{color:var(--red);font-size:.8rem}
+.pbar-wrap{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:12px 0}
+.pbar-row{display:flex;align-items:center;gap:10px;margin:4px 0}
+.pbar-d{width:64px;font-size:.75rem;color:var(--muted);white-space:nowrap}
+.pbar{flex:1;height:14px;background:var(--bg);border-radius:7px;overflow:hidden}
+.pbar-f{height:100%;background:var(--teal);border-radius:7px}
+.pbar-f.full{background:var(--amber)}
+.pbar-v{width:110px;text-align:right;font-size:.75rem;color:var(--ink);white-space:nowrap}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <header>
@@ -223,6 +255,7 @@ footer b{color:#fff}
     <button class="tab" data-tab="upcoming">Upcoming<span class="cnt" id="c-upcoming"></span></button>
     <button class="tab" data-tab="closed">Closed / Listed<span class="cnt" id="c-closed"></span></button>
     <button class="tab" data-tab="cal">📅 Calendar</button>
+    <button class="tab" data-tab="plan">💰 Plan</button>
     <button class="tab" data-tab="book">📒 My Book</button>
   </div>
   <div class="seg">
@@ -232,6 +265,7 @@ footer b{color:#fff}
   </div>
   <input id="search" type="text" placeholder="Search IPO name…">
   <button id="refreshBtn">⟳ Refresh</button>
+  <button id="xlsBtn" onclick="exportExcel()" title="Download all IPOs + My Book as Excel">⬇ Excel</button>
   <span id="stamp">loading…</span>
   <span id="lic-stamp"></span>
 </div>
@@ -252,13 +286,13 @@ footer b{color:#fff}
       <li>GMP journey + reliability check vs last 25 actual listings</li>
       <li>Quota breakdown, fundamentals, dates & registrar allotment links</li>
     </ul>
-    <div class="price"><b>₹500</b> <small>for 6 months of full access (~₹83/month)</small></div>
+    <div class="price"><b>Members-only</b> <small>· DM me for subscription details</small></div>
     <div class="steps"><b>How to subscribe:</b><br>
       1️⃣ Message me on email or Instagram below<br>
-      2️⃣ Pay ₹500 (details shared on chat)<br>
+      2️⃣ Subscription & payment details shared privately on chat<br>
       3️⃣ Receive your personal access code & enter it here</div>
     <div class="contact">
-      <a class="em" href="mailto:deepuploads27@gmail.com?subject=FinDeependence%20IPO%20Tracker%20Subscription&body=Hi%20Deep%2C%20I%20want%20the%206-month%20subscription%20(%E2%82%B9500)%20of%20the%20IPO%20Tracker.">✉️ Email Me</a>
+      <a class="em" href="mailto:deepuploads27@gmail.com?subject=FinDeependence%20IPO%20Tracker%20Subscription&body=Hi%20Deep%2C%20I%20am%20interested%20in%20subscribing%20to%20the%20IPO%20Tracker.%20Please%20share%20the%20details.">✉️ Email Me</a>
       <a href="https://instagram.com/findeependence" target="_blank" rel="noopener">📸 Instagram</a>
     </div>
     <input id="pw-code" placeholder="ENTER ACCESS CODE" autocomplete="off">
@@ -316,8 +350,9 @@ function num(s){const v=parseFloat(String(s??'').replace(/&#\d+;/g,'').replace(/
 function nameKey(s){return String(s??'').toLowerCase().replace(/\b(ltd|limited|ipo|india|the|company|co)\b/g,'').replace(/[^a-z0-9]/g,'');}
 function nameMatch(a,b){const x=nameKey(a),y=nameKey(b);if(!x||!y)return false;return x===y||x.startsWith(y)||y.startsWith(x);}
 function isoDay(s){const m=String(s??'').match(/^(\d{4}-\d{2}-\d{2})/);return m?m[1]:null;}
+function localISO(d){d=d||new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function statusFrom(dOpen,dClose,dList,today){
-  const t=today||new Date().toISOString().slice(0,10);
+  const t=today||localISO(); /* FIX: was UTC toISOString — showed wrong status 00:00–05:30 IST */
   if(dList&&t>=dList)return 'listed';
   if(dOpen&&t<dOpen)return 'upcoming';
   if(dOpen&&dClose&&t>=dOpen&&t<=dClose)return 'open';
@@ -577,7 +612,7 @@ async function load(){
     const subBy={}; [(sm&&sm.reportTableData)||[],(ss&&ss.reportTableData)||[]].flat().forEach(r=>{const x=mapSubRow(r);if(x.slug)subBy[x.slug]=x;});
     const ttBy={}; [(tm&&tm.reportTableData)||[],(ts&&ts.reportTableData)||[]].flat().forEach(r=>{const x=mapTtRow(r);if(x.slug)ttBy[x.slug]=x;});
     const gmps=gh?parseIpowatch(gh):[];
-    const today=new Date().toISOString().slice(0,10);
+    const today=localISO(); /* FIX: UTC→local */
     IPOS=((li&&li.reportTableData)||[]).map(r=>{
       const b=mapListRow(r);
       const tt=ttBy[b.slug]||{};
@@ -626,7 +661,7 @@ async function load(){
 
 /* ============ per-IPO enrichment (price band, lot, quota, fundamentals) ============ */
 async function enrichAll(){
-  const targets=IPOS.filter(p=>['open','upcoming'].includes(p.status)||(p.status==='closed'&&p.dBoa&&p.dBoa>=new Date(Date.now()-7*864e5).toISOString().slice(0,10)));
+  const targets=IPOS.filter(p=>['open','upcoming'].includes(p.status)||(p.status==='closed'&&p.dBoa&&p.dBoa>=localISO(new Date(Date.now()-7*864e5))));
   const queue=targets.slice(0,20);
   const workers=Array(3).fill(0).map(async()=>{
     while(queue.length){const p=queue.shift();await enrich(p).catch(()=>{});}
@@ -751,6 +786,7 @@ function render(){
   IPOS.forEach(p=>b[p.status==='open'?'open':p.status==='upcoming'?'upcoming':'closed'].push(p));
   ['open','upcoming','closed'].forEach(k=>document.getElementById('c-'+k).textContent='('+b[k].length+')');
   if(view.tab==='cal'){grid.innerHTML=calendarHTML();return;}
+  if(view.tab==='plan'){grid.innerHTML=planHTML();return;}
   if(view.tab==='book'){grid.innerHTML=bookHTML();return;}
   let list=b[view.tab];
   if(view.cat!=='all')list=list.filter(p=>p.cat===view.cat);
@@ -790,7 +826,7 @@ function calendarHTML(){
   let days='';
   for(let i=0;i<45;i++){
     const d=new Date(today);d.setDate(d.getDate()+i);
-    const key=d.toISOString().slice(0,10);
+    const key=localISO(d); /* FIX: UTC key shifted every event one day off in IST */
     const active=wins.filter(w=>w.o<=d&&w.c>=d);
     const e=evs[key]||[];
     if(!e.length&&active.length<2)continue;
@@ -829,7 +865,8 @@ function openDetail(slug){
         return `<tr><td>${l}</td><td>${sh.toLocaleString('en-IN')}</td><td>${lots?lots.toLocaleString('en-IN'):'—'}</td><td>${x!=null?x.toFixed(2)+'x':'—'}</td><td>${c!=null?(x<=1?'~100%':c.toFixed(c<1?1:0)+'%'):'—'}</td></tr>`;}).join('')
       :'';
   document.getElementById('dpanel').innerHTML=`
-  <div class="dhead">
+  <div class="dhead" style="position:relative">
+    <button class="ipo-x" onclick="event.stopPropagation();exportIPO('${p.slug}')" title="Export this IPO to Excel">⬇ Excel</button>
     ${p.logo?`<img class="cl" src="${esc(p.logo)}" onerror="this.style.display='none'">`:''}
     <div><h2>${esc(p.full||p.name)}</h2>
       <div class="sub">${esc(p.board)} · ${p.cat==='SME'?'SME':'Mainboard'} IPO${p.lead?' · Lead Mgr: '+esc(p.lead):''}${det.registrar?' · Registrar: '+esc(det.registrar):''}${p.isin?' · '+esc(p.isin):''}</div></div>
@@ -1153,7 +1190,7 @@ function showLocked(msg){
 async function applyLicense(){
   const st=licStatus();
   if(!(st instanceof Date)){
-    showLocked(st===false?'Your subscription has expired — message me to renew for ₹500 / 6 months.':'');
+    showLocked(st===false?'Your subscription has expired — DM or email me to renew.':'');
     return;
   }
   if(!WORKER_URL){showUnlocked(st);return;}
@@ -1208,5 +1245,261 @@ document.getElementById('dov').onclick=e=>{if(e.target.id==='dov')closeDetail();
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDetail();});
 load();setInterval(load,AUTO_MS);
 </script>
+<script>
+/* ================================================================
+   FinDeependence v2 additions (added July 2026)
+   1) 15-day Capital Allocation Planner with ASBA block/rotation
+   2) Multi-sheet Excel export (SheetJS) + per-IPO export
+   Data sources: Chittorgarh reports 82 (list), 118 (timetable),
+   21 (subscription); GMP: ipowatch.in / ipopremium.in public pages.
+   ================================================================ */
+
+/* ---------------- Allocation Planner ---------------- */
+const PLAN_KEY='fd_plan_settings';
+function planSettings(){
+  let s;try{s=JSON.parse(localStorage.getItem(PLAN_KEY)||'{}')}catch(e){s={}}
+  return {budget:+s.budget>0?+s.budget:500000,pans:Math.max(1,Math.min(12,+s.pans||1)),
+    horizon:Math.max(1,Math.min(45,+s.horizon||15)),
+    retail:s.retail!==false,shni:!!s.shni,bhni:!!s.bhni,qib:!!s.qib};
+}
+function planSave(){
+  const g=id=>document.getElementById(id);
+  localStorage.setItem(PLAN_KEY,JSON.stringify({
+    budget:+g('pl-budget').value||0,pans:+g('pl-pans').value||1,horizon:+g('pl-horizon').value||15,
+    retail:g('pl-retail').checked,shni:g('pl-shni').checked,bhni:g('pl-bhni').checked,qib:g('pl-qib').checked
+  }));
+  render();
+}
+function addDaysISO(iso,n){const d=new Date(iso+'T00:00:00');d.setDate(d.getDate()+n);return localISO(d);}
+function blockEnd(p){ // date till which ASBA keeps funds blocked
+  if(p.dRef) return {end:p.dRef,est:false,src:'refund date from Chittorgarh timetable'};
+  if(p.dBoa) return {end:addDaysISO(p.dBoa,1),est:true,src:'allotment date +1 day (refund date not yet published)'};
+  if(p.dClose)return {end:addDaysISO(p.dClose,4),est:true,src:'close +4 days estimate (timetable not yet published)'};
+  return {end:null,est:true,src:'dates not yet published'};
+}
+function computePlan(){
+  const s=planSettings(), today=localISO(), lastOpen=addDaysISO(today,s.horizon);
+  const cands=IPOS.filter(p=>p.dOpen&&p.dClose&&(p.status==='open'||p.status==='upcoming')
+    &&p.dOpen<=lastOpen&&p.dClose>=today);
+  const plannable=[],tba=[];
+  cands.forEach(p=>{(p.price&&p.lot?plannable:tba).push(p)});
+  const used={};
+  const winOf=p=>{const st=p.dOpen>today?p.dOpen:today;const be=blockEnd(p);
+    return {from:st,to:be.end||addDaysISO(p.dClose,4),est:be.est,src:be.src};};
+  const daysIn=w=>{const out=[];let d=w.from,g=0;while(d<=w.to&&g++<120){out.push(d);d=addDaysISO(d,1);}return out;};
+  const fits=(w,amt)=>amt>0&&daysIn(w).every(d=>(used[d]||0)+amt<=s.budget);
+  const take=(w,amt)=>daysIn(w).forEach(d=>used[d]=(used[d]||0)+amt);
+  const items=plannable.map(p=>{
+    const lotCost=p.price*p.lot;
+    const shniLots=minLotsFor(200000,p.price,p.lot), bhniLots=minLotsFor(1000000,p.price,p.lot);
+    return {p,v:verdict(p),w:winOf(p),lotCost,shniLots,bhniLots,
+      shniCost:shniLots?shniLots*lotCost:null,bhniCost:bhniLots?bhniLots*lotCost:null,
+      apps:[],slots:s.pans};
+  });
+  const bySc=[...items].sort((a,b)=>(b.v.score-a.v.score)||(((b.p.gmp&&b.p.gmp.pct)||0)-((a.p.gmp&&a.p.gmp.pct)||0)));
+  const uncovered=[];
+  /* Pass 1 — cover EVERY IPO with 1 application first (open-date order) */
+  [...items].sort((a,b)=>a.p.dOpen.localeCompare(b.p.dOpen)).forEach(it=>{
+    if(s.retail&&fits(it.w,it.lotCost)){take(it.w,it.lotCost);it.apps.push({cat:'Retail',lots:1,amt:it.lotCost});it.slots--;}
+    else if(s.shni&&it.shniCost&&fits(it.w,it.shniCost)){take(it.w,it.shniCost);it.apps.push({cat:'sHNI',lots:it.shniLots,amt:it.shniCost});it.slots--;}
+    else uncovered.push(it);
+  });
+  /* Pass 2a — extra family PANs: +1 retail lot per free PAN, best-scored IPOs first */
+  if(s.retail)bySc.forEach(it=>{
+    while(it.slots>0&&it.apps.length&&fits(it.w,it.lotCost)){
+      take(it.w,it.lotCost);it.apps.push({cat:'Retail',lots:1,amt:it.lotCost});it.slots--;}
+  });
+  /* Pass 2b — leftover budget: upgrade best-scored IPOs Retail→sHNI, then →bHNI */
+  if(s.shni)bySc.forEach(it=>{
+    if(!it.apps.length||!it.shniCost||it.apps.some(a=>a.cat!=='Retail'))return;
+    const r=it.apps[0], delta=it.shniCost-r.amt;
+    if(delta>0&&fits(it.w,delta)){take(it.w,delta);r.cat='sHNI';r.lots=it.shniLots;r.amt=it.shniCost;}
+  });
+  if(s.bhni)bySc.forEach(it=>{
+    if(!it.apps.length||!it.bhniCost)return;
+    const h=it.apps.find(a=>a.cat==='sHNI')||it.apps.find(a=>a.cat==='Retail');
+    if(!h)return;
+    const delta=it.bhniCost-h.amt;
+    if(delta>0&&fits(it.w,delta)){take(it.w,delta);h.cat='bHNI';h.lots=it.bhniLots;h.amt=it.bhniCost;}
+  });
+  const totApplied=items.reduce((a,it)=>a+it.apps.reduce((x,y)=>x+y.amt,0),0);
+  const peak=Object.values(used).reduce((a,b)=>Math.max(a,b),0);
+  window.FD_PLAN={settings:s,items,tba,uncovered,used,totApplied,peak,today,
+    generated:new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})};
+  return window.FD_PLAN;
+}
+function planHTML(){
+  const s=planSettings();
+  const P=computePlan();
+  const fmtD=iso=>iso?new Date(iso+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—';
+  const inputs=`<div class="plan-inputs">
+    <h3>💰 Capital Allocation Planner — next <b>${s.horizon}</b> days</h3>
+    <div class="pi-row">
+      <label>Total budget (₹)<input id="pl-budget" type="number" min="0" step="10000" value="${s.budget}"></label>
+      <label>Family PANs<input id="pl-pans" type="number" min="1" max="12" value="${s.pans}"></label>
+      <label>Horizon (days)<input id="pl-horizon" type="number" min="1" max="45" value="${s.horizon}"></label>
+    </div>
+    <div class="pi-row pi-cats">
+      <label><input id="pl-retail" type="checkbox" ${s.retail?'checked':''}> Retail (1 lot/PAN)</label>
+      <label><input id="pl-shni" type="checkbox" ${s.shni?'checked':''}> sHNI ₹2–10L</label>
+      <label><input id="pl-bhni" type="checkbox" ${s.bhni?'checked':''}> bHNI ₹10L+</label>
+      <label><input id="pl-qib" type="checkbox" ${s.qib?'checked':''}> QIB*</label>
+      <button class="pl-go" onclick="planSave()">↻ Recalculate</button>
+    </div>
+    <div class="small">*QIB is reserved for SEBI-registered institutions (MFs, FPIs, banks). Individuals cannot bid in the QIB book — tick only if you apply through a QIB entity; the planner shows QIB subscription data but auto-allocates only Retail/sHNI/bHNI.</div>
+    <div class="small">Strategy: 1) cover <b>every</b> IPO with one application → 2) extra PANs on best-scored IPOs → 3) leftover budget upgrades best IPOs to sHNI/bHNI. ASBA rule respected: on any single day, total blocked money never exceeds your budget; money released after refund date is reused automatically.</div>
+  </div>`;
+  if(!P.items.length&&!P.tba.length)
+    return `<div class="calwrap">${inputs}<div class="note">No open or upcoming IPOs with published dates in the next ${s.horizon} days. Hit ⟳ Refresh, or widen the horizon.</div></div>`;
+  const rows=P.items.sort((a,b)=>a.p.dOpen.localeCompare(b.p.dOpen)).map(it=>{
+    const appsTxt=it.apps.length
+      ? it.apps.map(a=>`${a.cat}${a.lots>1?' ('+a.lots+' lots)':' (1 lot)'} — ${fmtINR(a.amt)}`).join('<br>')
+      : '<span class="pl-skip">Not funded — budget exhausted in this window</span>';
+    const tot=it.apps.reduce((x,y)=>x+y.amt,0);
+    const estP=it.p.gmp&&it.p.gmp.val!=null
+      ? it.apps.reduce((x,a)=>x+it.p.gmp.val*it.p.lot*a.lots,0):null;
+    return `<tr>
+      <td><b onclick="openDetail('${it.p.slug}')" style="cursor:pointer">${esc(it.p.name)}</b><br>
+        <small>${it.p.cat==='SME'?'SME':'Mainboard'} · score ${it.v.score}</small></td>
+      <td>${fmtD(it.p.dOpen)} → ${fmtD(it.p.dClose)}<br><small>blocked till ${fmtD(it.w.to)}${it.w.est?' (est.)':''}</small></td>
+      <td>${fmtINR(it.lotCost)}<br><small>${it.p.lot} sh × ₹${it.p.price}</small></td>
+      <td>${appsTxt}</td>
+      <td class="r">${tot?fmtINR(tot):'—'}</td>
+      <td class="r">${estP!=null?fmtINR(estP):'—'}</td>
+    </tr>`;
+  }).join('');
+  const tbaHtml=P.tba.length?`<div class="note">⏳ Also opening in this window but <b>price/lot not announced yet</b> (re-plan once announced): ${P.tba.map(p=>esc(p.name)+' ('+fmtD(p.dOpen)+')').join(' · ')}</div>`:'';
+  const uncHtml=P.uncovered.length?`<div class="clash"><h3>⚠️ Budget could not cover</h3><div class="small">${P.uncovered.map(it=>`${esc(it.p.name)} — needs ${fmtINR(it.lotCost)} during ${fmtD(it.w.from)}–${fmtD(it.w.to)} when budget is fully blocked`).join('<br>')}</div></div>`:'';
+  const dayKeys=Object.keys(P.used).sort();
+  const bars=dayKeys.map(k=>{
+    const v=P.used[k],pct=Math.min(100,v/P.settings.budget*100);
+    return `<div class="pbar-row"><span class="pbar-d">${fmtD(k)}</span>
+      <div class="pbar"><div class="pbar-f${pct>=99.5?' full':''}" style="width:${pct}%"></div></div>
+      <span class="pbar-v">${fmtINR(v)}</span></div>`;
+  }).join('');
+  return `<div class="calwrap">${inputs}
+    <div class="plan-sum">
+      <div class="ps-card"><b>${fmtINR(P.settings.budget)}</b><small>Budget</small></div>
+      <div class="ps-card"><b>${fmtINR(P.totApplied)}</b><small>Total applications</small></div>
+      <div class="ps-card"><b>${fmtINR(P.peak)}</b><small>Peak blocked on one day</small></div>
+      <div class="ps-card"><b>${P.items.filter(i=>i.apps.length).length}/${P.items.length+P.tba.length}</b><small>IPOs covered</small></div>
+    </div>
+    <div class="plan-tbl-wrap"><table class="plan-tbl">
+      <tr><th>IPO</th><th>Bid window / funds blocked</th><th>1 lot cost</th><th>Planned applications</th><th class="r">Amount</th><th class="r">Est. gain if allotted*</th></tr>
+      ${rows}
+    </table></div>
+    ${uncHtml}${tbaHtml}
+    <div class="pbar-wrap"><h3>📊 Day-by-day capital blocked (ASBA)</h3>${bars||'<div class="small">Nothing allocated yet.</div>'}</div>
+    <div class="small">*Est. gain = current GMP × shares, only if fully allotted and GMP holds — GMP is unofficial grey-market chatter and often wrong; oversubscription makes allotment a lottery. Total application amount ≠ money lost — unallotted funds are only blocked, then released. Dates from Chittorgarh timetable feed; verify open/close/refund dates on NSE/BSE or the RHP before applying. Education only — not investment advice.</div>
+  </div>`;
+}
+
+/* ---------------- Excel export (SheetJS) ---------------- */
+function ensureXLSX(){
+  if(typeof XLSX==='undefined'){alert('Excel library not loaded (check internet connection and refresh the page).');return false;}
+  return true;
+}
+const IPO_COLS=['Company','Board','Status','Open Date','Close Date','Allotment (BoA) Date','Refund Date','Listing Date',
+  'Issue/Allotment Price ₹','Lot Size (shares)','Retail 1-Lot Cost ₹','sHNI Min Lots','sHNI Min Amount ₹','bHNI Min Lots','bHNI Min Amount ₹',
+  'GMP ₹','GMP %','Est. Listing ₹','Sub Total (x)','QIB (x)','sHNI (x)','bHNI (x)','NII (x)','Retail (x)','Verdict Score','Issue Size ₹Cr'];
+function ipoRow(p){
+  const shniL=p.price&&p.lot?minLotsFor(200000,p.price,p.lot):null;
+  const bhniL=p.price&&p.lot?minLotsFor(1000000,p.price,p.lot):null;
+  const v=verdict(p);
+  return [p.full||p.name,p.cat==='SME'?'SME':'Mainboard',p.status,
+    p.dOpen||'',p.dClose||'',p.dBoa||'',p.dRef||'',p.dList||'',
+    p.price??'',p.lot??'',p.price&&p.lot?p.price*p.lot:'',
+    shniL??'',shniL?shniL*p.price*p.lot:'',bhniL??'',bhniL?bhniL*p.price*p.lot:'',
+    p.gmp?p.gmp.val:'',p.gmp?p.gmp.pct:'',p.gmp&&p.price?p.price+p.gmp.val:(p.estPrice||''),
+    p.sub.total??'',p.sub.qib??'',p.sub.shni??'',p.sub.bhni??'',p.sub.nii??'',p.sub.rii??'',
+    v.score,p.sizeCr??''];
+}
+function sheetFrom(rows,cols){
+  const ws=XLSX.utils.aoa_to_sheet([cols,...rows]);
+  ws['!cols']=cols.map((c,i)=>({wch:i===0?32:Math.max(12,String(c).length+2)}));
+  return ws;
+}
+function exportExcel(){
+  if(!ensureXLSX())return;
+  const wb=XLSX.utils.book_new();
+  const groups={'Upcoming':'upcoming','Ongoing (Open)':'open','Closed (Await Listing)':'closed','Listed':'listed'};
+  Object.entries(groups).forEach(([label,st])=>{
+    const rows=IPOS.filter(p=>p.status===st).sort((a,b)=>(a.dOpen||'').localeCompare(b.dOpen||'')).map(ipoRow);
+    XLSX.utils.book_append_sheet(wb,sheetFrom(rows,IPO_COLS),label);
+  });
+  /* My Book — with P&L, XIRR, yield */
+  const entries=bookAll();
+  const bkRows=entries.map(e=>{const c=bookCalc(e);
+    return [e.name,e.cat,e.ad||'',e.ss,e.pr,c.cost,e.sd||'',e.sp??'',c.gross??'',e.ch||0,c.net??'',
+      c.net!=null&&c.cost?+(c.net/c.cost*100).toFixed(2):''];});
+  const done=entries.filter(e=>bookCalc(e).net!=null);
+  const totCost=done.reduce((a,e)=>a+bookCalc(e).cost,0);
+  const totNet=done.reduce((a,e)=>a+(bookCalc(e).net||0),0);
+  const rate=xirr(bookFlows(entries));
+  bkRows.push([],['TOTALS (closed trades)','','','','',totCost,'','','','',totNet,totCost?+(totNet/totCost*100).toFixed(2):''],
+    ['XIRR (annualised)','',rate!=null?+(rate*100).toFixed(2)+'%':'insufficient data']);
+  XLSX.utils.book_append_sheet(wb,sheetFrom(bkRows,
+    ['IPO','Category','Applied On','Shares Allotted','Issue Price ₹','Cost ₹','Sold On','Sell Price ₹','Gross P/L ₹','Charges ₹','Net P/L ₹','Yield %']),'My Book P&L');
+  /* Allocation plan (if planner was opened) */
+  if(window.FD_PLAN){
+    const P=window.FD_PLAN;
+    const plRows=P.items.map(it=>[it.p.name,it.p.cat==='SME'?'SME':'Mainboard',it.p.dOpen,it.p.dClose,it.w.to+(it.w.est?' (est.)':''),
+      it.apps.map(a=>a.cat+' x'+a.lots).join(' + ')||'not funded',
+      it.apps.reduce((x,y)=>x+y.amt,0),it.v.score]);
+    plRows.push([],['Budget',P.settings.budget],['Total applications',P.totApplied],['Peak blocked',P.peak],['Generated',P.generated]);
+    XLSX.utils.book_append_sheet(wb,sheetFrom(plRows,
+      ['IPO','Board','Open','Close','Funds Blocked Till','Applications','Amount ₹','Verdict Score']),'Allocation Plan');
+  }
+  /* Sources & disclaimer */
+  const src=[
+    ['Field','Source'],
+    ['IPO list, prices, issue size','Chittorgarh.com public report 82 (via app data feed)'],
+    ['Open/Close/Allotment/Refund/Listing dates','Chittorgarh.com public timetable report 118'],
+    ['Live subscription (QIB/sHNI/bHNI/NII/Retail)','Chittorgarh.com public report 21 (NSE+BSE bid data)'],
+    ['GMP (grey market premium)','ipowatch.in & ipopremium.in public pages — UNOFFICIAL, not exchange data'],
+    ['Lot size, quota details','Chittorgarh IPO detail pages'],
+    ['My Book P&L / XIRR / Yield','Your own entries stored in this browser (localStorage)'],
+    ['Allocation plan','Computed in-app from the above; SEBI category minimums: sHNI > ₹2,00,000, bHNI > ₹10,00,000'],
+    [],
+    ['Exported',new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST'],
+    ['Disclaimer','Education only. Not investment advice. Verify all dates & prices on NSE/BSE/RHP before applying. Estimates are indicative; registrar basis of allotment governs actual allotment.']
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(src);ws['!cols']=[{wch:42},{wch:95}];
+  XLSX.utils.book_append_sheet(wb,ws,'Sources');
+  XLSX.writeFile(wb,'FinDeependence-IPO-Tracker_'+localISO()+'.xlsx');
+}
+function exportIPO(slug){
+  if(!ensureXLSX())return;
+  const p=IPOS.find(x=>x.slug===slug);if(!p)return;
+  const wb=XLSX.utils.book_new();
+  const v=verdict(p);
+  const kv=[['Field','Value'],
+    ['Company',p.full||p.name],['Board',p.cat==='SME'?'SME':'Mainboard'],['Status',p.status],
+    ['Open Date',p.dOpen||'TBA'],['Close Date',p.dClose||'TBA'],['Allotment (BoA)',p.dBoa||'TBA'],
+    ['Refund',p.dRef||'TBA'],['Listing',p.dList||'TBA'],
+    ['Issue/Allotment Price ₹',p.price??'TBA'],['Lot Size',p.lot??'TBA'],
+    ['Retail 1 Lot ₹',p.price&&p.lot?p.price*p.lot:'TBA'],
+    ['sHNI Min',p.price&&p.lot?minLotsFor(200000,p.price,p.lot)+' lots = ₹'+(minLotsFor(200000,p.price,p.lot)*p.price*p.lot).toLocaleString('en-IN'):'TBA'],
+    ['bHNI Min',p.price&&p.lot?minLotsFor(1000000,p.price,p.lot)+' lots = ₹'+(minLotsFor(1000000,p.price,p.lot)*p.price*p.lot).toLocaleString('en-IN'):'TBA'],
+    ['Issue Size ₹Cr',p.sizeCr??'—'],['GMP ₹',p.gmp?p.gmp.val:'—'],['GMP %',p.gmp?p.gmp.pct:'—'],
+    ['Est. Listing ₹',p.gmp&&p.price?p.price+p.gmp.val:(p.estPrice||'—')],
+    ['Subscription Total (x)',p.sub.total??'—'],['QIB (x)',p.sub.qib??'—'],['sHNI (x)',p.sub.shni??'—'],
+    ['bHNI (x)',p.sub.bhni??'—'],['NII (x)',p.sub.nii??'—'],['Retail (x)',p.sub.rii??'—'],
+    ['Verdict Score',v.score],['Verdict',v.label],
+    ['Lead Manager',p.lead||'—'],['ISIN',p.isin||'—'],
+    [],[ 'Sources','Chittorgarh reports 82/118/21 (list, dates, subscription); GMP: ipowatch.in / ipopremium.in (unofficial)'],
+    ['Exported',new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST'],
+    ['Disclaimer','Education only. Not investment advice. Verify on NSE/BSE/RHP.']];
+  const ws=XLSX.utils.aoa_to_sheet(kv);ws['!cols']=[{wch:26},{wch:60}];
+  XLSX.utils.book_append_sheet(wb,ws,'Overview');
+  const hist=histOf(slug);
+  if(hist.length){
+    const hRows=hist.map(h=>[h.t?new Date(h.t).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}):'',h.g??'',h.tot??'',h.qib??'',h.rii??'']);
+    XLSX.utils.book_append_sheet(wb,sheetFrom(hRows,['Recorded At (IST)','GMP ₹','Total (x)','QIB (x)','Retail (x)']),'GMP & Sub History');
+  }
+  XLSX.writeFile(wb,'FD_'+(p.slug||p.name).replace(/[^\w-]+/g,'-')+'_'+localISO()+'.xlsx');
+}
+</script>
+
 </body>
 </html>
