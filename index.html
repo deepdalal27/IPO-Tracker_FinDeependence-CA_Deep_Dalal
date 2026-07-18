@@ -424,7 +424,11 @@ function verdict(p){
   }
   if(p.sub.rii!=null&&!pre)r.push([p.sub.rii<=2?'g':p.sub.rii<=15?'n':'b',`Retail ${p.sub.rii.toFixed(2)}x → allotment odds ≈ ${p.sub.rii<=1?'100':(100/p.sub.rii).toFixed(0)}%`]);
   if(max===0)return {score:0,label:'Awaiting data',cls:'v-mid',reasons:r};
-  const score=Math.round(Math.max(0,Math.min(100,s/max*100)));
+  let score=Math.round(Math.max(0,Math.min(100,s/max*100)));
+  if(p.provisional){
+    score=Math.min(score,44); /* provisional data can never rate above 'Mixed' */
+    r.unshift(['n','Provisional entry — official NSE/BSE feed not yet published. All numbers indicative; verify before acting.']);
+  }
   const [label,cls]=score>=65?['Strong signals','v-hi']:score>=45?['Mixed signals','v-mid']:['Weak signals','v-lo'];
   return {score,label:pre?label+' (pre-open)':label,cls,reasons:r};
 }
@@ -701,16 +705,25 @@ async function load(){
     };
     gmps.forEach(g=>{
       if(!g.name||g.gmp==null)return;
-      if(/listed|closed/i.test(g.statusTxt||''))return;
+      /* STRICT gate — protects against IPO Watch archive/performance tables:
+         a row is only a live IPO if it carries a bid-window, a board tag,
+         and an explicit Upcoming/Open status. Archive rows have none of these. */
+      if(!g.dates||!g.board)return;
+      if(!/upcoming|current|open/i.test(g.statusTxt||''))return;
       if(IPOS.some(p=>nameMatch(g.name,p.name)||nameMatch(g.name,p.full)))return;
+      const w=parseWin(g.dates,today);
+      if(!w.o||!w.c)return;                                   // unparseable window → not trustworthy
+      const staleCut=localISO(new Date(Date.now()-10*864e5));
+      const farCut=localISO(new Date(Date.now()+60*864e5));
+      if(w.c<staleCut||w.o>farCut)return;                     // stale or implausibly far window
+      if(g.price&&Math.abs(g.gmp)/g.price>=0.6)return;        // "GMP" ≥60% of price ⇒ almost surely a listing-price column, not GMP
       const slug=g.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')+'-ipo';
       if(seen.has(slug))return; seen.add(slug);
-      const w=parseWin(g.dates,today);
       const isSme=/sme/i.test(g.board||'');
       IPOS.push(mkStub({slug,name:g.name,full:g.name,cat:isSme?'SME':'IPO',board:isSme?'SME':'Mainboard',
         price:g.price||null,estPrice:g.estPrice||null,
         gmp:(g.gmp!=null&&(!g.price||Math.abs(g.gmp)<g.price))?{val:g.gmp,pct:g.price?+(g.gmp/g.price*100).toFixed(2):null}:null,
-        dOpen:w.o,dClose:w.c,status:w.o?statusFrom(w.o,w.c,null,today):'upcoming',
+        dOpen:w.o,dClose:w.c,status:statusFrom(w.o,w.c,null,today),
         provisional:true}));
     });
     recordHistory();
