@@ -203,6 +203,26 @@ footer b{color:#fff}
 </style>
 <style>
 /* v2: planner + excel */
+.scn-h{margin:14px 14px 6px;font-size:1rem}
+.scn-selwrap{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.scn-ipo{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:6px 14px;cursor:pointer;font:inherit;font-size:.82rem}
+.scn-ipo.on{background:var(--green);color:#fff;border-color:var(--green)}
+.scn-cattabs{display:flex;gap:8px;align-items:center;margin:8px 14px;flex-wrap:wrap}
+.scn-cat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 14px;cursor:pointer;font:inherit;font-size:.82rem}
+.scn-cat.on{background:var(--violet);color:#fff;border-color:var(--violet)}
+.scn-mx td.base{outline:3px solid var(--teal);outline-offset:-3px;background:var(--teal-soft)}
+.scn-mx td.neg{color:var(--red)}
+.scn-proj td{vertical-align:top}
+.pj-live{color:var(--muted);font-size:.78rem}
+.pj-proj{font-weight:600;color:var(--green-dark);font-size:.85rem}
+.pj-proj.pj-ov{color:var(--violet)}
+.pj-in{width:86px;margin-top:4px;padding:4px 6px;border:1px dashed var(--line);border-radius:6px;font:inherit;font-size:.75rem}
+.df-wrap{margin:10px 0;font-size:.82rem;color:var(--ink)}
+.df-row{display:flex;gap:8px;align-items:center;margin:6px 0}
+.df-row span{width:90px;font-weight:600}
+.df-row input{width:64px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;font:inherit}
+.df-row small{color:var(--muted)}
+.sc-over{opacity:.45}
 .p-prov{background:#fef3c7;color:#92400e;border:1px solid #fbbf24}
 .prov-note{font-size:.72rem;color:var(--amber);background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 10px;margin-top:8px}
 #xlsBtn{background:var(--green);color:#fff;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}
@@ -258,6 +278,7 @@ footer b{color:#fff}
     <button class="tab" data-tab="closed">Closed / Listed<span class="cnt" id="c-closed"></span></button>
     <button class="tab" data-tab="cal">📅 Calendar</button>
     <button class="tab" data-tab="plan">💰 Plan</button>
+    <button class="tab" data-tab="scn">🎯 Scenarios</button>
     <button class="tab" data-tab="book">📒 My Book</button>
   </div>
   <div class="seg">
@@ -864,6 +885,7 @@ function render(){
   ['open','upcoming','closed'].forEach(k=>document.getElementById('c-'+k).textContent='('+b[k].length+')');
   if(view.tab==='cal'){grid.innerHTML=calendarHTML();return;}
   if(view.tab==='plan'){grid.innerHTML=planHTML();return;}
+  if(view.tab==='scn'){grid.innerHTML=scnHTML();return;}
   if(view.tab==='book'){grid.innerHTML=bookHTML();return;}
   let list=b[view.tab];
   if(view.cat!=='all')list=list.filter(p=>p.cat===view.cat);
@@ -1331,6 +1353,258 @@ load();setInterval(load,AUTO_MS);
    21 (subscription); GMP: ipowatch.in / ipopremium.in public pages.
    ================================================================ */
 
+/* ================================================================
+   SCENARIOS ENGINE (v4)
+   1. Projected-final subscription (last-day QIB bias correction):
+      transparent day-factor model, fully editable + per-IPO manual
+      override which ALWAYS wins over the model.
+   2. Scenario calculator: at sub=x, GMP=y -> expected allotment &
+      gain per category, If-Allotted AND Expected-Value side by side.
+   3. Sensitivity matrix: sub steps (base..+4s) x GMP steps (base±2g).
+   4. Target-profit screener: capital required per IPO/category.
+   All SEBI math reuses the app's tested calcOutcome/minLotsFor.
+   ================================================================ */
+const SCN_KEY='fd_scn';
+function scnSettings(){
+  let s;try{s=JSON.parse(localStorage.getItem(SCN_KEY)||'{}')}catch(e){s={}}
+  const df=s.dayFactors||{};
+  return {
+    rate:+s.rate||0, days:Math.max(1,+s.days||7),
+    stepSub:+s.stepSub||5, stepGmp:+s.stepGmp||10,
+    target:+s.target||500000, qibLots:+s.qibLots||0,
+    sel:s.sel||null, cat:s.cat||'rii',
+    baseSub:s.baseSub===0?0:(+s.baseSub||null), baseGmp:s.baseGmp===0?0:(+s.baseGmp||null),
+    dayFactors:{
+      qib:Array.isArray(df.qib)&&df.qib.length===3?df.qib:[8,30,100],
+      nii:Array.isArray(df.nii)&&df.nii.length===3?df.nii:[12,35,100],
+      rii:Array.isArray(df.rii)&&df.rii.length===3?df.rii:[30,60,100]
+    },
+    overrides:s.overrides||{}   // {slug:{qib:x,shni:x,bhni:x,rii:x}}
+  };
+}
+function scnPatch(patch){
+  const s=scnSettings();
+  Object.assign(s,patch);
+  localStorage.setItem(SCN_KEY,JSON.stringify(s));
+  return s;
+}
+function scnSaveInputs(){
+  const g=id=>{const el=document.getElementById(id);return el?el.value:null;};
+  const df=cat=>[0,1,2].map(i=>Math.max(1,Math.min(100,+g('df-'+cat+'-'+i)||100)));
+  scnPatch({
+    rate:+g('sc-rate')||0, days:+g('sc-days')||7,
+    stepSub:Math.max(1,+g('sc-stepsub')||5), stepGmp:Math.max(1,+g('sc-stepgmp')||10),
+    target:+g('sc-target')||500000, qibLots:+g('sc-qiblots')||0,
+    baseSub:g('sc-basesub')===''?null:+g('sc-basesub'), baseGmp:g('sc-basegmp')===''?null:+g('sc-basegmp'),
+    dayFactors:{qib:df('qib'),nii:df('nii'),rii:df('rii')}
+  });
+  render();
+}
+function scnSelect(slug){scnPatch({sel:slug,baseSub:null,baseGmp:null});render();}
+function scnCat(c){scnPatch({cat:c});render();}
+function scnOverride(slug,cat,val){
+  const s=scnSettings();
+  s.overrides[slug]=s.overrides[slug]||{};
+  const v=parseFloat(val);
+  if(v>0)s.overrides[slug][cat]=v; else delete s.overrides[slug][cat];
+  if(!Object.keys(s.overrides[slug]).length)delete s.overrides[slug];
+  localStorage.setItem(SCN_KEY,JSON.stringify(s));
+  render();
+}
+/* which bidding day is this IPO on? */
+function scnDayInfo(p,today){
+  if(!p.dOpen||!p.dClose)return null;
+  const ms=(new Date(today+'T00:00:00')-new Date(p.dOpen+'T00:00:00'));
+  const total=Math.round((new Date(p.dClose+'T00:00:00')-new Date(p.dOpen+'T00:00:00'))/864e5)+1;
+  const cur=Math.round(ms/864e5)+1;
+  return {cur:Math.min(Math.max(cur,0),total),total,last:cur>=total};
+}
+/* projected FINAL subscription for a category.
+   Priority: your manual override > final-day live > day-factor projection of live. */
+function scnProjSub(p,cat){
+  const S=scnSettings(), today=localISO();
+  const key=cat==='shni'?'shni':cat==='bhni'?'bhni':cat==='qib'?'qib':'rii';
+  const ov=S.overrides[p.slug];
+  if(ov&&ov[key]>0)return {x:ov[key],src:'your override',proj:false,ov:true};
+  let live=effSub(p,key);
+  if(live==null&&(key==='shni'||key==='bhni'))live=p.sub.nii;
+  if(live==null)return null;
+  const di=scnDayInfo(p,today);
+  if(!di||di.last||p.status!=='open')return {x:live,src:'live'+(di&&di.last?' (final day)':''),proj:false,ov:false};
+  const fam=key==='qib'?'qib':(key==='rii'?'rii':'nii');
+  const arr=S.dayFactors[fam==='qib'?'qib':fam==='rii'?'rii':'nii'];
+  const idx=Math.min(arr.length-1,Math.max(0,Math.round(di.cur/di.total*arr.length)-1));
+  const f=Math.max(1,arr[idx])/100;
+  return {x:+(live/f).toFixed(2),src:'projected final (day '+di.cur+'/'+di.total+', live '+live.toFixed(2)+'x ÷ '+Math.round(f*100)+'% day-factor)',proj:true,ov:false};
+}
+/* one scenario, one category: returns everything both ways */
+function scnOutcome(p,cat,x,gmpVal,S){
+  if(!p.price||!p.lot||x==null||gmpVal==null)return null;
+  const price=p.price,lot=p.lot,lv=price*lot;
+  const minL=cat==='rii'?1:cat==='shni'?(minLotsFor(200000,price,lot)||1)
+        :cat==='bhni'?(minLotsFor(1000000,price,lot)||1):(minLotsFor(200000,price,lot)||1);
+  const lots=cat==='qib'&&S.qibLots>=minL?S.qibLots:minL;
+  const o=calcOutcome(cat,x,lots,1,price,lot,gmpVal,S.rate,S.days,cat==='qib'?minL:null);
+  if(!o)return null;
+  const capital=(cat==='rii'?1:Math.max(lots,minL))*lv*(cat==='rii'?1:1);
+  const cap=cat==='rii'?lv:Math.max(lots,o.minL||minL)*lv;
+  /* If-allotted: retail = full 1 lot; others = pro-rata lots at x (deterministic) */
+  const iaLots=cat==='rii'?1:(x<=1?Math.max(lots,minL):Math.max(lots,minL)/x);
+  const fundCost=S.rate>0?cap*S.rate/100*S.days/365:0;
+  const ifAllot=iaLots*gmpVal*lot-fundCost;
+  return {minL,lots:Math.max(lots,minL),cap,
+    pOne:o.pOne,expLots:o.expLots,ev:o.expProfit,ifAllot,fundCost,
+    evPerRupee:cap?(o.expProfit!=null?o.expProfit/cap:null):null};
+}
+const SCN_CATS=[['rii','Retail'],['shni','sHNI'],['bhni','bHNI'],['qib','QIB']];
+function scnLive(){return IPOS.filter(p=>(p.status==='open'||p.status==='upcoming')&&p.price&&p.lot);}
+function scnHTML(){
+  const S=scnSettings(), today=localISO();
+  const live=scnLive();
+  const fmtD=iso=>iso?fmtDMY(iso).replace(/-\d{4}$/,''):'—';
+  /* -------- assumptions panel -------- */
+  const dfRow=(k,lab)=>`<div class="df-row"><span>${lab}</span>${[0,1,2].map(i=>
+    `<input id="df-${k}-${i}" type="number" min="1" max="100" value="${S.dayFactors[k][i]}">`).join('')}<small>% of final by day 1 / 2 / last</small></div>`;
+  const panel=`<div class="plan-inputs">
+    <h3>🎯 Scenario Engine — assumptions (editable, nothing hidden)</h3>
+    <div class="pi-row">
+      <label>HNI funding rate %/yr<input id="sc-rate" type="number" min="0" step="0.5" value="${S.rate}"></label>
+      <label>Days blocked<input id="sc-days" type="number" min="1" value="${S.days}"></label>
+      <label>Sub step (×)<input id="sc-stepsub" type="number" min="1" value="${S.stepSub}"></label>
+      <label>GMP step (₹)<input id="sc-stepgmp" type="number" min="1" value="${S.stepGmp}"></label>
+      <label>QIB bid lots<input id="sc-qiblots" type="number" min="0" value="${S.qibLots}"></label>
+      <label>Target profit ₹<input id="sc-target" type="number" min="0" step="50000" value="${S.target}"></label>
+    </div>
+    <div class="df-wrap"><b>Day-factor model</b> (last-day surge correction — % of final subscription typically in place at each day's close; edit to your view):
+      ${dfRow('qib','QIB')}${dfRow('nii','sHNI/bHNI')}${dfRow('rii','Retail')}</div>
+    <div class="pi-row"><button class="pl-go" onclick="scnSaveInputs()">↻ Apply assumptions</button></div>
+    <div class="small">Projection method: live subscription ÷ day-factor = projected final. Your per-IPO override (below) always beats the model. Final-day and closed IPOs always use live/actual numbers — never projected.</div>
+  </div>`;
+  if(!live.length)return `<div class="calwrap">${panel}<div class="note">No open/upcoming IPOs with published price & lot right now. Provisional IPOs appear here once official price/lot arrive.</div></div>`;
+  /* -------- point 2: projection table + overrides -------- */
+  const projRows=live.map(p=>{
+    const di=scnDayInfo(p,today);
+    const cells=SCN_CATS.map(([k,lab])=>{
+      const pr=scnProjSub(p,k);
+      const liveTxt=(()=>{let lv=effSub(p,k==='shni'?'shni':k==='bhni'?'bhni':k==='qib'?'qib':'rii');
+        if(lv==null&&(k==='shni'||k==='bhni'))lv=p.sub.nii;
+        return lv==null?'—':lv.toFixed(2)+'x';})();
+      const ovVal=(S.overrides[p.slug]||{})[k]||'';
+      return `<td><div class="pj-live">${liveTxt}</div>
+        <div class="pj-proj${pr&&pr.ov?' pj-ov':''}">${pr?('→ '+pr.x.toFixed(2)+'x'+(pr.proj?' ✳':pr.ov?' (you)':'')):'—'}</div>
+        <input class="pj-in" type="number" min="0" step="0.5" placeholder="override" value="${ovVal}"
+          onchange="scnOverride('${p.slug}','${k}',this.value)"></td>`;
+    }).join('');
+    return `<tr><td><b>${esc(p.name)}</b><br><small>${p.cat==='SME'?'SME':'Main'} · ${fmtD(p.dOpen)}–${fmtD(p.dClose)}${di&&p.status==='open'?' · day '+di.cur+'/'+di.total:(p.status==='upcoming'?' · not open yet':'')}</small></td>${cells}</tr>`;
+  }).join('');
+  const projTbl=`<div class="plan-tbl-wrap"><h3 class="scn-h">⚖️ Like-for-like demand — live vs projected FINAL subscription</h3>
+    <table class="plan-tbl scn-proj"><tr><th>IPO</th><th>Retail</th><th>sHNI</th><th>bHNI</th><th>QIB</th></tr>${projRows}</table>
+    <div class="small" style="padding:0 14px 12px">✳ = model projection (day-factor). Top figure = live now; arrow figure = estimated final — this is what fixes the “IPO closing today always looks more subscribed than the one closing tomorrow” bias. Type your own final estimate to override the model. Upcoming IPOs with no bids yet show — until data exists.</div></div>`;
+  /* -------- point 1+4: per-IPO scenario calculator + sensitivity matrix -------- */
+  const sel=live.find(p=>p.slug===S.sel)||live[0];
+  const selBtns=live.map(p=>`<button class="scn-ipo${p.slug===sel.slug?' on':''}" onclick="scnSelect('${p.slug}')">${esc(p.name)}</button>`).join('');
+  const defGmp=sel.gmp?sel.gmp.val:0;
+  const prSel=scnProjSub(sel,S.cat);
+  const baseSub=S.baseSub!=null?S.baseSub:(prSel?prSel.x:10);
+  const baseGmp=S.baseGmp!=null?S.baseGmp:defGmp;
+  const catRows=SCN_CATS.map(([k,lab])=>{
+    const pr=scnProjSub(sel,k);
+    const x=pr?pr.x:null;
+    const o=x!=null?scnOutcome(sel,k,x,baseGmp,S):null;
+    return `<tr><td><b>${lab}</b><br><small>${k==='rii'?'1 lot':o?o.lots+' lots min':''}</small></td>
+      <td>${x!=null?x.toFixed(2)+'x':'—'}<br><small>${pr?esc(pr.src):'no data yet'}</small></td>
+      <td class="r">${o?fmtINR(o.cap):'—'}</td>
+      <td class="r">${o?(k==='rii'?(o.pOne*100).toFixed(1)+'%':o.expLots.toFixed(2)+' lots'):'—'}</td>
+      <td class="r">${o&&o.ifAllot!=null?fmtINR(o.ifAllot):'—'}</td>
+      <td class="r"><b>${o&&o.ev!=null?fmtINR(o.ev):'—'}</b></td></tr>`;
+  }).join('');
+  const scenTbl=`<div class="plan-tbl-wrap"><h3 class="scn-h">🧮 ${esc(sel.name)} — outcome at GMP ₹${baseGmp}${S.rate?' · funding '+S.rate+'%/'+S.days+'d':''}</h3>
+    <table class="plan-tbl"><tr><th>Category</th><th>Final sub used</th><th class="r">Capital</th><th class="r">Exp. allotment</th><th class="r">If allotted → profit</th><th class="r">Expected value</th></tr>${catRows}</table>
+    <div class="small" style="padding:0 14px 12px">“If allotted”: Retail = full 1 lot (lottery winner); HNI/QIB = deterministic pro-rata at that subscription. “Expected value” weights Retail by its 1/x lottery odds. Both shown — rank by EV, dream by if-allotted.</div></div>`;
+  /* sensitivity matrix: sub base..+4*step rows, gmp base-2g..+2g cols, active category */
+  const subVals=[0,1,2,3,4].map(i=>+(baseSub+i*S.stepSub).toFixed(2));
+  const gmpVals=[-2,-1,0,1,2].map(i=>baseGmp+i*S.stepGmp);
+  const catTabs=SCN_CATS.map(([k,lab])=>`<button class="scn-cat${S.cat===k?' on':''}" onclick="scnCat('${k}')">${lab}</button>`).join('');
+  const mrows=subVals.map(sv=>{
+    const cells=gmpVals.map(gv=>{
+      const o=scnOutcome(sel,S.cat,Math.max(0.01,sv),gv,S);
+      if(!o)return '<td class="r">—</td>';
+      const v=o.ev,hot=sv===subVals[0]&&gv===baseGmp;
+      return `<td class="r${v>=0?'':' neg'}${hot?' base':''}">${fmtINR(v)}<br><small>${fmtINR(o.ifAllot)}</small></td>`;
+    }).join('');
+    return `<tr><td><b>${sv}x</b></td>${cells}</tr>`;
+  }).join('');
+  const matrix=`<div class="plan-tbl-wrap"><h3 class="scn-h">📊 Sensitivity — ${SCN_CATS.find(c=>c[0]===S.cat)[1]} · base sub ${baseSub}x (editable) × GMP ₹${baseGmp}</h3>
+    <div class="scn-cattabs">${catTabs}
+      <label style="margin-left:auto;font-size:.8rem;color:var(--muted)">Base sub <input id="sc-basesub" type="number" min="0" step="1" value="${baseSub}" style="width:80px"></label>
+      <label style="font-size:.8rem;color:var(--muted)">Base GMP ₹<input id="sc-basegmp" type="number" step="1" value="${baseGmp}" style="width:80px"></label>
+      <button class="pl-go" style="padding:6px 12px" onclick="scnSaveInputs()">↻</button></div>
+    <table class="plan-tbl scn-mx"><tr><th>Sub ↓ / GMP →</th>${gmpVals.map(g=>`<th class="r">₹${g}</th>`).join('')}</tr>${mrows}</table>
+    <div class="small" style="padding:0 14px 12px">Each cell: <b>Expected value</b> (big) and If-allotted (small). Steps: subscription +${S.stepSub}× per row, GMP ±₹${S.stepGmp} per column — change both in assumptions. Highlighted cell = your base case.</div></div>`;
+  /* -------- point 3: target screener -------- */
+  const opts=[];
+  live.forEach(p=>{
+    if(!p.gmp||p.gmp.val==null)return;
+    SCN_CATS.forEach(([k,lab])=>{
+      const pr=scnProjSub(p,k); if(!pr)return;
+      const x=Math.max(0.01,pr.x), g=p.gmp.val;
+      const lv=p.price*p.lot;
+      const minL=k==='rii'?1:k==='shni'?(minLotsFor(200000,p.price,p.lot)||1)
+            :k==='bhni'?(minLotsFor(1000000,p.price,p.lot)||1):(minLotsFor(200000,p.price,p.lot)||1);
+      const fcRate=S.rate>0?S.rate/100*S.days/365:0;
+      let unitsLabel,capNeeded,note='';
+      const perLotProfit=(g*p.lot)/(x<=1?1:x)-lv*fcRate;         // pro-rata profit per bid lot (HNI/QIB)
+      if(k==='rii'){
+        const perPan=(x<=1?1:1/x)*g*p.lot-lv*fcRate;             // EV per PAN
+        if(perPan<=0)return;
+        const pans=Math.ceil(S.target/perPan);
+        capNeeded=pans*lv; unitsLabel=pans.toLocaleString('en-IN')+' PANs × 1 lot';
+        if(pans>20)note='needs '+pans+' PANs — practically impossible';
+      }else{
+        if(perLotProfit<=0)return;
+        let lots=Math.max(minL,Math.ceil(S.target/perLotProfit));
+        capNeeded=lots*lv;
+        if(k==='shni'&&capNeeded>1000000){note='exceeds sHNI ₹10L band → use bHNI';}
+        unitsLabel=lots.toLocaleString('en-IN')+' lots';
+      }
+      opts.push({p,k,lab,x,g,capNeeded,unitsLabel,note,src:pr.src,
+        evr:capNeeded?S.target/capNeeded:0});
+    });
+  });
+  opts.sort((a,b)=>a.capNeeded-b.capNeeded);
+  const planBudget=(function(){try{return (JSON.parse(localStorage.getItem('fd_plan_settings')||'{}').budget)||0}catch(e){return 0}})();
+  const scRows=opts.slice(0,14).map(o=>{
+    const over=planBudget&&o.capNeeded>planBudget;
+    return `<tr class="${over?'sc-over':''}"><td><b>${esc(o.p.name)}</b><br><small>${o.p.cat==='SME'?'SME':'Main'} · GMP ₹${o.g}</small></td>
+      <td>${o.lab}<br><small>${o.x.toFixed(1)}x ${o.src.includes('projected')?'proj':o.src.includes('override')?'your est':'live'}</small></td>
+      <td>${o.unitsLabel}${o.note?'<br><small class="pl-skip">'+o.note+'</small>':''}</td>
+      <td class="r"><b>${fmtINR(o.capNeeded)}</b>${over?'<br><small class="pl-skip">above your ₹'+Math.round(planBudget/100000)/10+'L budget</small>':''}</td></tr>`;
+  }).join('');
+  const screener=`<div class="plan-tbl-wrap"><h3 class="scn-h">🎯 To make ${fmtINR(S.target)} (EV basis, current GMP · projected final sub) — cheapest first</h3>
+    ${opts.length?`<table class="plan-tbl"><tr><th>IPO</th><th>Category</th><th>Application needed</th><th class="r">Capital required</th></tr>${scRows}</table>`
+    :'<div class="note" style="margin:12px">No IPO/category currently offers positive expected profit at these assumptions — target unreachable. Change assumptions or wait for better GMP/demand.</div>'}
+    <div class="small" style="padding:0 14px 12px">Capital = blocked application amount (returned if unallotted, minus nothing — ASBA). Greyed rows exceed your Plan-tab budget${planBudget?' of '+fmtINR(planBudget):''}. Retail rows assume 1 lot per PAN per SEBI — beyond your family PANs it is informational only.</div></div>`;
+  /* -------- point 5: fund-manager verdict -------- */
+  const fm=live.map(p=>{
+    const best=SCN_CATS.map(([k,lab])=>{
+      const pr=scnProjSub(p,k); if(!pr||!p.gmp)return null;
+      const o=scnOutcome(p,k,Math.max(0.01,pr.x),p.gmp.val,S);
+      return o&&o.evPerRupee!=null?{k,lab,o,pr}:null;
+    }).filter(Boolean).sort((a,b)=>b.o.evPerRupee-a.o.evPerRupee)[0];
+    return best?{p,best}:null;
+  }).filter(Boolean).sort((a,b)=>b.best.o.evPerRupee-a.best.o.evPerRupee);
+  const fmRows=fm.map((f,i)=>`<tr><td><b>#${i+1}</b></td><td><b>${esc(f.p.name)}</b><br><small>${fmtD(f.p.dOpen)}–${fmtD(f.p.dClose)}</small></td>
+    <td>${f.best.lab}<br><small>@ ${f.best.pr.x.toFixed(1)}x ${f.best.pr.proj?'proj':''}</small></td>
+    <td class="r">${(f.best.o.evPerRupee*100).toFixed(2)}%<br><small>per ₹100 blocked</small></td>
+    <td class="r">${fmtINR(f.best.o.ev)}<br><small>per min application</small></td></tr>`).join('');
+  const fmTbl=`<div class="plan-tbl-wrap"><h3 class="scn-h">👔 Fund-manager ranking — EV per rupee at projected final demand</h3>
+    ${fm.length?`<table class="plan-tbl"><tr><th>Rank</th><th>IPO</th><th>Best category</th><th class="r">EV yield</th><th class="r">EV / min app</th></tr>${fmRows}</table>`:'<div class="note" style="margin:12px">Awaiting GMP/subscription data.</div>'}
+    <div class="small" style="padding:0 14px 12px">This ranking already corrects the staggered-close bias (projected finals, not raw live numbers) and feeds the 💰 Plan tab, which adds your budget + ASBA rotation to turn this ranking into an executable day-by-day plan. Education only — not investment advice; GMP is unofficial; projections are estimates.</div></div>`;
+  return `<div class="calwrap">${panel}
+    <div class="scn-selwrap"><span class="small" style="margin-right:6px">IPO:</span>${selBtns}</div>
+    ${scenTbl}${matrix}${projTbl}${screener}${fmTbl}</div>`;
+}
+
 /* ---------------- Allocation Planner (v3 — expected-value engine) ----------------
    Ranking method (per user spec):
    1. LIVE DATA: expected profit per rupee via calcOutcome() —
@@ -1371,18 +1645,18 @@ function planEV(p,cat){
     :cat==='shni'?(minLotsFor(200000,price,lot)||1)
     :cat==='bhni'?(minLotsFor(1000000,price,lot)||1)
     :(minLotsFor(200000,price,lot)||1);
-  let x=effSub(p,cat==='qib'?'qib':cat);
-  if(x==null&&(cat==='shni'||cat==='bhni'))x=p.sub.nii;
-  let flag='live';
-  if(x==null){x=1;flag=(g!=null?'presub':'nodata');}
+  const pj=scnProjSub(p,cat==='qib'?'qib':cat);   /* projected-final — corrects last-day QIB bias */
+  let x=pj?pj.x:null;
+  let flag='live', projTag=pj&&pj.proj?' (proj. final)':pj&&pj.ov?' (your est.)':'';
+  if(x==null){x=1;flag=(g!=null?'presub':'nodata');projTag='';}
   const o=calcOutcome(cat,x,unitLots,1,price,lot,g,0,0,cat==='qib'?unitLots:null);
   const unitCost=unitLots*lv;
   const ev=(o&&o.expProfit!=null&&unitCost)?o.expProfit/unitCost:null;
-  return {cat,x,flag,unitLots,unitCost,ev,o,g,lv};
+  return {cat,x,flag,projTag,unitLots,unitCost,ev,o,g,lv};
 }
 function evBasis(e){
   if(!e)return '';
-  if(e.flag==='live')return e.x.toFixed(1)+'x sub (live)';
+  if(e.flag==='live')return e.x.toFixed(1)+'x sub'+(e.projTag||' (live)');
   if(e.flag==='presub')return 'pre-sub — full allotment assumed';
   return 'no GMP/sub data — verdict rank';
 }
