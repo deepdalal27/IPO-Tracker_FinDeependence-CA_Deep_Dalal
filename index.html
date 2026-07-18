@@ -203,6 +203,8 @@ footer b{color:#fff}
 </style>
 <style>
 /* v2: planner + excel */
+.p-prov{background:#fef3c7;color:#92400e;border:1px solid #fbbf24}
+.prov-note{font-size:.72rem;color:var(--amber);background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 10px;margin-top:8px}
 #xlsBtn{background:var(--green);color:#fff;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}
 #xlsBtn:hover{background:var(--green-dark)}
 .ipo-x{position:absolute;top:10px;right:44px;background:var(--green);color:#fff;border:0;border-radius:8px;padding:5px 10px;cursor:pointer;font:inherit;font-size:.8rem}
@@ -451,6 +453,9 @@ function mapListRow(r){ // CG report 82
 function mapTtRow(r){ // CG report 118
   return {
     slug:r['~urlrewrite_folder_name']||null,
+    id:r['~id']||null,
+    coName:stripText(r['Company']||'')||null,
+    issueType:r['Issue Type']||null,
     logo:r['~compare_image']||null,
     dOpen:isoDay(r['~Issue_Open_Date']),dClose:isoDay(r['~Issue_Close_Date']),
     dBoa:isoDay(r['~Timetable_BOA_dt']),dRef:isoDay(r['~Timetable_Refunds_dt']),dList:isoDay(r['~IPO_Listing_date']),
@@ -593,6 +598,12 @@ function parseIpowatch(html){
         const rec=parseGmpText({name:c[0],gmp:c[1],price:c[3]!==undefined?c[3]:null,est:c[4]});
         // some layouts: name|gmp|price|est
         if(rec.price==null&&c[2]){const alt=parseGmpText({name:c[0],gmp:c[1],price:c[2],est:c[3]});if(alt.price!=null)Object.assign(rec,alt);}
+        // discovery extras: bid-window text, board, status — found by pattern, not position
+        c.forEach(cell=>{
+          if(!rec.dates&&/\d{1,2}\s*(?:[A-Za-z]{3,9})?\s*[-\u2013]\s*\d{1,2}\s*[A-Za-z]{3,9}/.test(cell))rec.dates=cell;
+          if(!rec.board&&/mainboard|sme/i.test(cell)&&cell.length<30)rec.board=cell;
+          if(!rec.statusTxt&&/upcoming|current|open|closed|listed/i.test(cell)&&cell.length<30)rec.statusTxt=cell;
+        });
         if(rec.name&&rec.gmp!=null)out.push(rec);
       });
     });
@@ -654,6 +665,54 @@ async function load(){
     });
     // de-dup by slug, keep first
     const seen=new Set(); IPOS=IPOS.filter(p=>{if(!p.slug||seen.has(p.slug))return false;seen.add(p.slug);return true;});
+    /* ===== DISCOVERY (v3): make sure no announced IPO is invisible =====
+       A) IPOs present in the timetable feed (118) but missing from the list feed (82)
+       B) IPOs quoted on IPO Watch GMP page but missing from both Chittorgarh feeds
+          (e.g. Indo-MIM, July 2026) — added as PROVISIONAL until official feeds carry them */
+    const blankSub=()=>({total:null,qib:null,shni:null,bhni:null,nii:null,rii:null,emp:null});
+    const mkStub=o=>Object.assign({slug:null,id:null,full:null,name:null,cat:'IPO',board:'Mainboard',logo:null,
+      lead:null,isin:null,price:null,sizeCr:null,size:'\u2014',dOpen:null,dClose:null,dList:null,
+      open:'',close:'',listing:'',dBoa:null,dRef:null,boa:'',status:'upcoming',lot:null,pe:null,
+      gmp:null,estPrice:null,sub:blankSub(),apps:null,updated:'',nse:null,cgUrl:null,url:null,
+      allotUrl:null,det:null,subApps:null,provisional:false},o);
+    Object.values(ttBy).forEach(tt=>{
+      if(!tt.slug||seen.has(tt.slug))return;
+      seen.add(tt.slug);
+      const nm=(tt.coName||tt.slug.replace(/-ipo$/,'').replace(/-/g,' ')).replace(/\s*Ltd\.?$/i,'');
+      const cgu=tt.id?('https://www.chittorgarh.com/ipo/'+tt.slug+'/'+tt.id+'/'):null;
+      IPOS.push(mkStub({slug:tt.slug,id:tt.id,name:nm,full:tt.coName||nm,logo:tt.logo||null,
+        cat:/sme/i.test(tt.issueType||'')?'SME':'IPO',board:/sme/i.test(tt.issueType||'')?'SME':'Mainboard',
+        dOpen:tt.dOpen,dClose:tt.dClose,dList:tt.dList,dBoa:tt.dBoa,dRef:tt.dRef,
+        open:tt.open,close:tt.close,boa:tt.boa,listing:tt.listing,
+        status:statusFrom(tt.dOpen,tt.dClose,tt.dList,today),cgUrl:cgu,url:cgu}));
+    });
+    const parseWin=(txt,ref)=>{ // "23-27 July" / "30 July-1 Aug" -> {o,c} ISO (year inferred)
+      const m=String(txt||'').match(/(\d{1,2})\s*([A-Za-z]{3,9})?\s*[-\u2013]\s*(\d{1,2})\s*([A-Za-z]{3,9})/);
+      if(!m)return {o:null,c:null};
+      const MN=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+      const mi=n=>{const k=MN.findIndex(x=>String(n||'').toLowerCase().startsWith(x));return k<0?null:k;};
+      const m2=mi(m[4]); if(m2==null)return {o:null,c:null};
+      const m1=m[2]?(mi(m[2])??m2):m2;
+      const refY=+ref.slice(0,4), refM=+ref.slice(5,7)-1;
+      let y1=refY; if(m1-refM<-6)y1++; if(m1-refM>6)y1--;
+      let y2=y1+(m2<m1?1:0);
+      const pad=n=>String(n).padStart(2,'0');
+      return {o:y1+'-'+pad(m1+1)+'-'+pad(+m[1]),c:y2+'-'+pad(m2+1)+'-'+pad(+m[3])};
+    };
+    gmps.forEach(g=>{
+      if(!g.name||g.gmp==null)return;
+      if(/listed|closed/i.test(g.statusTxt||''))return;
+      if(IPOS.some(p=>nameMatch(g.name,p.name)||nameMatch(g.name,p.full)))return;
+      const slug=g.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')+'-ipo';
+      if(seen.has(slug))return; seen.add(slug);
+      const w=parseWin(g.dates,today);
+      const isSme=/sme/i.test(g.board||'');
+      IPOS.push(mkStub({slug,name:g.name,full:g.name,cat:isSme?'SME':'IPO',board:isSme?'SME':'Mainboard',
+        price:g.price||null,estPrice:g.estPrice||null,
+        gmp:(g.gmp!=null&&(!g.price||Math.abs(g.gmp)<g.price))?{val:g.gmp,pct:g.price?+(g.gmp/g.price*100).toFixed(2):null}:null,
+        dOpen:w.o,dClose:w.c,status:w.o?statusFrom(w.o,w.c,null,today):'upcoming',
+        provisional:true}));
+    });
     recordHistory();
     document.getElementById('stamp').textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
     render();
@@ -766,7 +825,7 @@ function card(p){
     <div class="card-top">
       ${p.logo?`<img class="clogo" src="${esc(p.logo)}" alt="" onerror="this.style.display='none'">`:''}
       <div><h3>${esc(p.name)}</h3></div>
-      <div class="badges">${catPill}<span class="pill ${st[1]}">${st[0]}</span></div>
+      <div class="badges">${catPill}<span class="pill ${st[1]}">${st[0]}</span>${p.provisional?'<span class="pill p-prov" title="Announced IPO \u2014 spotted on the GMP wire; official Chittorgarh/NSE feed has not published its data yet. Dates indicative \u2014 verify before applying.">\u23f3 PROVISIONAL</span>':''}</div>
     </div>
     <div class="facts">
       <div class="fact"><div class="k">Price</div><div class="v">${p.price?fmtINR(p.price):'<small>TBA</small>'}</div></div>
@@ -774,7 +833,8 @@ function card(p){
       <div class="fact"><div class="k">GMP*</div><div class="v">${gmp}</div></div>
       <div class="fact"><div class="k">Issue Size</div><div class="v">${esc(p.size)}</div></div>
     </div>
-    <div class="dates"><span>Open<b>${dispDate(p.dOpen,p.open)}</b></span><span>Close<b>${dispDate(p.dClose,p.close)}</b></span><span>Allotment<b>${dispDate(p.dBoa,p.boa)}</b></span><span>Listing<b>${dispDate(p.dList,p.listing)}</b></span></div>
+    <div class="dates"><span>Open<b>${dispDate(p.dOpen,p.open)}${p.provisional?'*':''}</b></span><span>Close<b>${dispDate(p.dClose,p.close)}${p.provisional?'*':''}</b></span><span>Allotment<b>${dispDate(p.dBoa,p.boa)}</b></span><span>Listing<b>${dispDate(p.dList,p.listing)}</b></span></div>
+    ${p.provisional?'<div class="prov-note">*Indicative dates from IPO Watch GMP wire \u2014 official feed pending. Full details (price band, lot, exact dates) will appear automatically once NSE/BSE data is published. Verify before applying.</div>':''}
     ${hasSub?`<div class="subs"><h4><span>Live Subscription</span><span class="tot">Total ${p.sub.total.toFixed(2)}x</span></h4>
       ${subRow('QIB',p.sub.qib)}${subRow('sHNI',p.sub.shni)}${subRow('bHNI',p.sub.bhni)}${subRow('Retail',p.sub.rii)}</div>`:''}
     <div class="verdict ${v.cls}"><div class="vscore">${v.score}</div>
